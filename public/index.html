@@ -1187,8 +1187,31 @@ async function callClaude(prompt, maxTokens) {
     body: JSON.stringify({ model: MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] })
   });
   if (!resp.ok) { const errText = await resp.text().catch(()=> ''); throw new Error('API-Fehler ' + resp.status + ': ' + errText); }
-  const data = await resp.json();
-  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+
+  // Antwort kommt als SSE-Stream (siehe netlify/functions/claude.js) — Textteile
+  // laufend einsammeln statt auf die komplette Antwort zu warten. Das vermeidet den
+  // "Inactivity Timeout" von Netlify bei längeren Antworten (z.B. Kernpunkte-Extraktion).
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop(); // letzte, evtl. unvollständige Zeile für den nächsten Chunk aufheben
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let evt;
+      try { evt = JSON.parse(line.slice(6)); } catch (e) { continue; }
+      if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+        text += evt.delta.text;
+      } else if (evt.type === 'error') {
+        throw new Error('API-Fehler (Stream): ' + (evt.error?.message || 'unbekannt'));
+      }
+    }
+  }
+  return text;
 }
 function parseJsonLoose(raw) {
   let s = raw.trim();
