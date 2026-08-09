@@ -1598,16 +1598,20 @@ ${pdfText.slice(0, 60000)}`;
   return parsed;
 }
 
-async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
-  const prompt = `Du bereitest ein Kapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen).
+// Ein Claude-Call PRO UNTERKAPITEL statt einem großen Call für das ganze Kapitel:
+// Netlify killt Function-Requests nach ~30s auch beim Streamen (hartes Zeitlimit,
+// nicht nur "keine Daten"-Inaktivität) — bei vielen Unterkapiteln + max_tokens 8000
+// reißt ein einzelner Kapitel-Call das oft. Kleinere, einzelne Calls bleiben
+// zuverlässig darunter und ein Fehlschlag reißt nicht mehr das ganze Kapitel mit.
+async function generateSubnodeContent(pdfText, chOutline, snOutline) {
+  const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen).
 
 Kapitel: "${chOutline.title}" (Stat: ${chOutline.stat})
-Unterkapitel: ${JSON.stringify((chOutline.subnodes||[]).map(s=>({id:s.id,title:s.title})))}
+Unterkapitel: "${snOutline.title}"
 
-Für JEDES Unterkapitel:
-1. Extrahiere ALLE atomaren, prüfbaren Kernpunkte (Begriffe, Konzepte, Mechanismen) — vollständig, nichts auslassen.
-2. Gruppiere die Kernpunkte in 1 bis mehrere THEMATISCHE CLUSTER (= spätere Questgeber). Jeder Cluster hat einen eigenen, klar unterscheidbaren Schwerpunkt und NICHT dieselben Kernpunkte wie ein anderer Cluster desselben Unterkapitels (keine Überschneidung der Cluster untereinander). Bei wenig Stoff reicht 1 Cluster, bei viel/heterogenem Stoff mehrere (ca. 3-6 Kernpunkte pro Cluster ist ein guter Richtwert).
-3. Gib jedem Cluster/Questgeber einen echten Vornamen (z.B. "Mia", "Kevin", "Frau Bergmann") — das ist der Name, den der Spieler sieht, nicht das Thema. Verschiedene Namen pro Unterkapitel, keine Wiederholung.
+1. Extrahiere ALLE atomaren, prüfbaren Kernpunkte (Begriffe, Konzepte, Mechanismen) dieses Unterkapitels — vollständig, nichts auslassen.
+2. Gruppiere die Kernpunkte in 1 bis mehrere THEMATISCHE CLUSTER (= spätere Questgeber). Jeder Cluster hat einen eigenen, klar unterscheidbaren Schwerpunkt und NICHT dieselben Kernpunkte wie ein anderer Cluster (keine Überschneidung der Cluster untereinander). Bei wenig Stoff reicht 1 Cluster, bei viel/heterogenem Stoff mehrere (ca. 3-6 Kernpunkte pro Cluster ist ein guter Richtwert).
+3. Gib jedem Cluster/Questgeber einen echten Vornamen (z.B. "Mia", "Kevin", "Frau Bergmann") — das ist der Name, den der Spieler sieht, nicht das Thema. Verschiedene Namen, keine Wiederholung.
 4. Gib ein passendes Emoji-Icon für das Unterkapitel (zeigt den konkreten Inhalt, nicht nur das Fach).
 5. Liefere einen kurzen, relevanten Text-Auszug (excerpt, ca. 500-1500 Zeichen) aus dem Studienbrief-Text als Kontext für spätere Quest-Generierung.
 6. Falls das Unterkapitel eine Original-Übung/Wiederholungsfrage aus dem Studienbrief enthält, die sich als Kapitel-Abschluss-Herausforderung eignet, gib sie als "exercise" mit.
@@ -1617,29 +1621,40 @@ Vorfilter: Meta-/Verwaltungsinhalt wird nicht extrahiert.
 
 KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine doppelten Anführungszeichen in Strings.
 {
-  "subnodes": [{
-    "id": "${chOutline.subnodes && chOutline.subnodes[0] ? chOutline.subnodes[0].id : '1.1'}",
-    "icon": "🧭",
-    "excerpt": "...",
-    "questgeber": [ { "name": "Mia", "label": "Kurzer interner Cluster-Name (nicht sichtbar für den Spieler)", "kernpunkte": ["Begriff 1","Begriff 2"] } ],
-    "exercise": null
-  }]
+  "icon": "🧭",
+  "excerpt": "...",
+  "questgeber": [ { "name": "Mia", "label": "Kurzer interner Cluster-Name (nicht sichtbar für den Spieler)", "kernpunkte": ["Begriff 1","Begriff 2"] } ],
+  "exercise": null
 }
 
 Relevanter Studienbrief-Ausschnitt:
 ${pdfText.slice(0, 50000)}`;
 
-  const raw = await callClaude(prompt, 8000);
-  const parsed = parseJsonLoose(raw);
+  const raw = await callClaude(prompt, 3000);
+  return parseJsonLoose(raw);
+}
+
+async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
   let gi = startGlobalIndex;
-  const subnodes = (chOutline.subnodes || []).map((snOutline, si) => {
-    const genSn = (parsed.subnodes || []).find(s => s.id === snOutline.id) || {};
-    return buildNormalizedSubnode({
+  let anyFailed = false;
+  const subnodes = [];
+  for (let si = 0; si < (chOutline.subnodes || []).length; si++) {
+    const snOutline = chOutline.subnodes[si];
+    let genSn = {};
+    try {
+      logProgress(`  · "${snOutline.title}"...`, '');
+      genSn = await generateSubnodeContent(pdfText, chOutline, snOutline);
+    } catch (e) {
+      console.error(e);
+      anyFailed = true;
+      logProgress(`  ⚠ "${snOutline.title}" fehlgeschlagen: ${e.message || e}`, 'err');
+    }
+    subnodes.push(buildNormalizedSubnode({
       title: snOutline.title, icon: genSn.icon, excerpt: genSn.excerpt,
       questgeber: genSn.questgeber, exercise: genSn.exercise
-    }, chOutline.id, si, gi++);
-  });
-  return { id: chOutline.id, title: chOutline.title, stat: chOutline.stat, color: chOutline.color, icon: chOutline.icon || null, _generationFailed: false, subnodes };
+    }, chOutline.id, si, gi++));
+  }
+  return { id: chOutline.id, title: chOutline.title, stat: chOutline.stat, color: chOutline.color, icon: chOutline.icon || null, _generationFailed: anyFailed, subnodes };
 }
 
 async function retryChapter(chapterId) {
