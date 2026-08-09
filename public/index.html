@@ -1180,11 +1180,20 @@ pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierun
    AI / CLAUDE API
 ========================================================================= */
 // Netlify-Version: Call läuft über die eigene Function (Key liegt serverseitig)
-async function callClaude(prompt, maxTokens) {
+// cachedContext (optional): großer, über mehrere Calls hinweg UNVERÄNDERTER Textblock
+// (z.B. derselbe Studienbrief-Ausschnitt für alle Unterkapitel-Calls). Geht als
+// "system"-Block mit cache_control raus — Anthropic cached ihn serverseitig, alle
+// folgenden Calls mit demselben Block lesen ihn günstig+schnell aus dem Cache statt
+// ihn jedes Mal neu zu verarbeiten (spart Tokens/Kosten UND senkt die Latenz).
+async function callClaude(prompt, maxTokens, cachedContext) {
+  const body = { model: MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] };
+  if (cachedContext) {
+    body.system = [{ type: 'text', text: cachedContext, cache_control: { type: 'ephemeral' } }];
+  }
   const resp = await fetch('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] })
+    body: JSON.stringify(body)
   });
   if (!resp.ok) { const errText = await resp.text().catch(()=> ''); throw new Error('API-Fehler ' + resp.status + ': ' + errText); }
 
@@ -1193,7 +1202,7 @@ async function callClaude(prompt, maxTokens) {
   // "Inactivity Timeout" von Netlify bei längeren Antworten (z.B. Kernpunkte-Extraktion).
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '', text = '';
+  let buf = '', text = '', stopReason = null;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -1206,10 +1215,18 @@ async function callClaude(prompt, maxTokens) {
       try { evt = JSON.parse(line.slice(6)); } catch (e) { continue; }
       if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
         text += evt.delta.text;
+      } else if (evt.type === 'message_delta' && evt.delta?.stop_reason) {
+        stopReason = evt.delta.stop_reason;
       } else if (evt.type === 'error') {
         throw new Error('API-Fehler (Stream): ' + (evt.error?.message || 'unbekannt'));
       }
     }
+  }
+  // Leere Antwort ist kein gültiges Ergebnis (z.B. wenn Claude alles Budget fürs
+  // Nachdenken verbraucht hat, bevor Text kam) — klare Fehlermeldung statt kryptischem
+  // JSON.parse-Fehler weiter unten in der Aufrufkette.
+  if (!text.trim()) {
+    throw new Error('Leere Antwort von Claude' + (stopReason ? ' (stop_reason: ' + stopReason + ')' : '') + '.');
   }
   return text;
 }
@@ -1604,7 +1621,13 @@ ${pdfText.slice(0, 60000)}`;
 // reißt ein einzelner Kapitel-Call das oft. Kleinere, einzelne Calls bleiben
 // zuverlässig darunter und ein Fehlschlag reißt nicht mehr das ganze Kapitel mit.
 async function generateSubnodeContent(pdfText, chOutline, snOutline) {
-  const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen).
+  // Dieser Kontext-Block ist für JEDEN Unterkapitel-Call identisch (immer derselbe
+  // Ausschnitt des Studienbriefs) — als cachedContext an callClaude geben, statt ihn
+  // in jedem Prompt neu mitzuschicken. Anthropic cached ihn nach dem ersten Call,
+  // alle weiteren Unterkapitel-Calls lesen ihn günstig+schnell aus dem Cache.
+  const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${pdfText.slice(0, 50000)}`;
+
+  const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen), auf Basis des oben als Kontext bereitgestellten Studienbrief-Ausschnitts.
 
 Kapitel: "${chOutline.title}" (Stat: ${chOutline.stat})
 Unterkapitel: "${snOutline.title}"
@@ -1625,12 +1648,9 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   "excerpt": "...",
   "questgeber": [ { "name": "Mia", "label": "Kurzer interner Cluster-Name (nicht sichtbar für den Spieler)", "kernpunkte": ["Begriff 1","Begriff 2"] } ],
   "exercise": null
-}
+}`;
 
-Relevanter Studienbrief-Ausschnitt:
-${pdfText.slice(0, 50000)}`;
-
-  const raw = await callClaude(prompt, 3000);
+  const raw = await callClaude(prompt, 3000, context);
   return parseJsonLoose(raw);
 }
 
