@@ -1,0 +1,11 @@
+{
+  "name": "questlines-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gamifizierte Lern-App (Questgeber-System) — Netlify-Deployment",
+  "dependencies": {
+    "@netlify/blobs": "^10.0.0",
+    "jsdom": "^30.0.1"
+  }
+}

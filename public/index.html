@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Questlines — DHfPG Lernbegleiter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<style>
+:root{
+  --bg: #0f0f11;
+  --card: #1a1a1e;
+  --card-2: #202024;
+  --border: #2a2a30;
+  --text: #e8e6e0;
+  --text-dim: #9a9894;
+  --text-faint: #6b6a68;
+  --blue: #378ADD;
+  --green: #1D9E75;
+  --orange: #EF9F27;
+  --purple: #7F77DD;
+  --pink: #D67ABF;
+  --red: #E15554;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+button{ font-family: inherit; cursor: pointer; }
+input, select, textarea{ font-family: inherit; }
+.hidden{ display:none !important; }
+
+/* ---------- Layout shells ---------- */
+#app{ max-width: 1100px; margin: 0 auto; padding: 20px 20px 100px; }
+.topbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; }
+.topbar h1{ font-size: 18px; font-weight: 700; margin:0; letter-spacing: 0.2px; }
+.btn{
+  background: var(--card-2); border: 0.5px solid var(--border); color: var(--text);
+  padding: 9px 16px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.btn:hover{ background:#26262b; border-color:#38383f; }
+.btn:active{ transform: scale(0.98); }
+.btn-primary{ background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn-primary:hover{ background:#4a97e0; }
+.btn-ghost{ background: transparent; border-color: transparent; color: var(--text-dim); }
+.btn-ghost:hover{ background: var(--card-2); color: var(--text); }
+.btn-danger{ border-color: var(--red); color: var(--red); background:transparent; }
+.btn-sm{ padding:6px 10px; font-size:12.5px; border-radius:7px; }
+.btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+.card{ background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 16px; }
+
+/* ---------- Character view ---------- */
+.char-grid{ display:grid; grid-template-columns: 200px 220px 1fr; gap: 20px; align-items:start; }
+.char-figure-wrap{ display:flex; flex-direction:column; align-items:center; gap:14px; }
+.char-figure-wrap svg{ width:150px; height:260px; }
+.level-badge{ text-align:center; }
+.level-badge .lv-num{ font-size:26px; font-weight:800; }
+.level-badge .lv-label{ font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.06em; }
+.xp-bar-outer{ width:100%; height:8px; background: var(--card-2); border-radius: 5px; overflow:hidden; margin-top:6px; }
+.xp-bar-inner{ height:100%; background: linear-gradient(90deg, var(--blue), var(--purple)); border-radius:5px; transition: width .4s ease; }
+
+.stats-panel{ display:flex; flex-direction:column; gap:10px; }
+.body-stats-col{ display:flex; flex-direction:column; gap:10px; }
+.stat-row-main{
+  display:flex; align-items:center; justify-content:space-between;
+  background: var(--card); border:0.5px solid var(--border); border-radius:var(--radius-sm);
+  padding: 10px 12px; cursor:pointer;
+}
+.stat-row-main:hover{ border-color:#3a3a42; }
+.stat-row-main .name{ font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;}
+.stat-icon{ font-size:15px; width:20px; text-align:center; display:inline-block; flex-shrink:0; }
+.stat-mini-bar{ width:70px; height:5px; border-radius:4px; background:var(--card-2); overflow:hidden; display:block;}
+.stat-mini-bar > div{ height:100%; }
+.substat-wrap{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; padding: 4px 6px 4px 20px; }
+.substat{
+  display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:var(--text-dim);
+  background: var(--card-2); border-radius:7px; padding:7px 9px;
+}
+
+.section-label{
+  font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-faint);
+  margin: 18px 0 8px; font-weight:700;
+}
+
+.module-scroll{ display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; scrollbar-width: thin; }
+.module-tile{
+  min-width: 220px; max-width:220px; background: var(--card); border:0.5px solid var(--border); border-radius: var(--radius);
+  padding: 14px; cursor:pointer; position:relative; transition: border-color .15s ease, transform .1s ease;
+}
+.module-tile:hover{ border-color:#3a3a42; transform: translateY(-1px); }
+.module-tile .m-title{ font-weight:700; font-size:14px; margin-bottom:4px; padding-right:20px;}
+.module-tile .m-sub{ font-size:11.5px; color:var(--text-dim); margin-bottom:10px;}
+.module-tile .m-bar-outer{ height:6px; background:var(--card-2); border-radius:4px; overflow:hidden; position:relative;}
+.module-tile .m-bar-inner{ height:100%; border-radius:4px; }
+.module-tile .m-goal-marker{ position:absolute; top:-3px; width:2px; height:12px; background:#fff; opacity:.5; }
+.module-tile .m-meta{ display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:11px; color:var(--text-dim);}
+.module-tile .m-pace{ font-size:10.5px; font-weight:700; margin-top:4px; }
+.module-tile .m-pace.ahead{ color: var(--green); }
+.module-tile .m-pace.behind{ color: var(--red); }
+.module-tile .m-pace.ontrack{ color: var(--text-dim); }
+.upload-tile{
+  min-width:220px; max-width:220px; border: 1px dashed var(--border); border-radius: var(--radius);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; color:var(--text-dim); font-size:13px; font-weight:600; padding:14px;
+}
+.upload-tile:hover{ border-color:var(--blue); color:var(--blue); }
+.tile-del-btn{
+  position:absolute; top:10px; right:10px; width:20px; height:20px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-faint);
+  background: var(--card-2); opacity:0; transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+.module-tile:hover .tile-del-btn{ opacity:1; }
+.tile-del-btn:hover{ color:#fff; background: var(--red); }
+
+/* ---------- Quest panel (fixed) ---------- */
+#quest-panel{
+  position:fixed; right:20px; bottom:20px; width:300px; max-height:60vh;
+  background: var(--card); border:0.5px solid var(--border); border-radius: var(--radius);
+  display:flex; flex-direction:column; overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 40;
+}
+#quest-panel.collapsed .qp-body{ display:none; }
+.qp-head{ display:flex; align-items:center; justify-content:space-between; padding: 10px 12px; border-bottom:0.5px solid var(--border); cursor:pointer; }
+.qp-head .title{ font-size:13px; font-weight:700; }
+.qp-body{ overflow-y:auto; padding: 10px 12px 12px; }
+.qp-item{ padding:9px 10px; border-radius:8px; background:var(--card-2); margin-bottom:6px; cursor:pointer; font-size:12.5px; }
+.qp-item:hover{ background:#28282e; }
+.qp-item .qi-title{ font-weight:600; margin-bottom:2px;}
+.qp-item .qi-meta{ color:var(--text-dim); font-size:11px;}
+.qp-empty{ color:var(--text-faint); font-size:12px; text-align:center; padding: 14px 6px;}
+
+/* ---------- Skilltree ---------- */
+.tree-topbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+.tree-topbar .tt-title{ font-weight:700; font-size:16px;}
+.tree-level-bar{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.tree-level-bar .lvl-num{ font-size:13px; font-weight:700; white-space:nowrap; }
+.tree-level-bar .lvl-track{ flex:1; height:8px; background:var(--card-2); border-radius:5px; overflow:hidden; }
+.tree-level-bar .lvl-fill{ height:100%; background: linear-gradient(90deg, var(--green), var(--blue)); border-radius:5px; transition: width .4s ease; }
+#tree-scroll{
+  overflow: auto; border: 0.5px solid var(--border); border-radius: var(--radius);
+  background: radial-gradient(circle at 20% 10%, #16161a 0%, #0f0f11 60%);
+}
+.tree-node{ cursor:pointer; }
+.tree-node circle.node-ring{ transition: r .15s ease; }
+.tree-node:hover circle.node-ring{ r: var(--hover-r, 26); }
+.tree-node text{ pointer-events:none; user-select:none; }
+.node-tooltip{
+  position:absolute; pointer-events:none; background:#000; color:#fff; font-size:11.5px;
+  padding:6px 9px; border-radius:6px; z-index:50; max-width:220px; line-height:1.35; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+}
+
+/* ---------- Modals / overlays ---------- */
+.overlay{ position:fixed; inset:0; background: rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index: 100; padding: 16px; }
+.modal{
+  background: var(--card); border:0.5px solid var(--border); border-radius: var(--radius);
+  width: 100%; max-width: 560px; max-height: 88vh; overflow:hidden; display:flex; flex-direction:column;
+}
+.modal-head{ display:flex; align-items:center; justify-content:space-between; padding: 14px 18px; border-bottom: 0.5px solid var(--border); }
+.modal-head h2{ font-size:16px; margin:0; }
+.modal-body{ padding: 16px 18px; overflow-y:auto; }
+.modal-foot{ padding: 12px 18px; border-top:0.5px solid var(--border); display:flex; justify-content:flex-end; gap:8px;}
+
+/* Questgeber list */
+.qg-item{
+  display:flex; align-items:center; gap:12px; padding:12px; border-radius:10px; background:var(--card-2);
+  margin-bottom:8px; cursor:pointer; border: 0.5px solid transparent;
+}
+.qg-item:hover{ border-color:#3a3a42; }
+.qg-item.locked{ opacity:.45; cursor:not-allowed; }
+.qg-item .qg-icon{ font-size:20px; width:30px; text-align:center; flex-shrink:0; }
+.qg-item .qg-main{ flex:1; min-width:0; }
+.qg-item .qg-label{ font-weight:700; font-size:13.5px; margin-bottom:2px; }
+.qg-item .qg-status{ font-size:11.5px; color:var(--text-dim); }
+.qg-item .qg-status.done{ color: var(--green); }
+.qg-bar{ width:100%; height:4px; background:var(--card); border-radius:3px; overflow:hidden; margin-top:5px;}
+.qg-bar > div{ height:100%; background:var(--blue); }
+
+/* Quest Modal specific */
+.qm-tabs{ display:flex; border-bottom:0.5px solid var(--border); }
+.qm-tab{ flex:1; text-align:center; padding:11px 4px; font-size:12.5px; font-weight:700; color:var(--text-dim); border-bottom: 2px solid transparent; }
+.qm-tab.active{ color:var(--text); border-bottom-color: var(--blue); }
+.npc-hook{ background: var(--card-2); border-radius: var(--radius-sm); padding:14px; font-size:14px; line-height:1.5; border-left: 3px solid var(--orange); }
+.scenario-box{ font-size:14px; line-height:1.6; white-space:pre-wrap; margin-bottom:14px;}
+.npc-chat{ display:flex; flex-direction:column; gap:8px; margin: 12px 0;}
+.npc-msg{ max-width:85%; padding:9px 12px; border-radius:12px; font-size:13.5px; line-height:1.4;}
+.npc-msg.npc{ background: var(--card-2); align-self:flex-start; border-bottom-left-radius:3px;}
+.npc-msg.me{ background: var(--blue); color:#fff; align-self:flex-end; border-bottom-right-radius:3px;}
+.chat-input-row{ display:flex; gap:8px; margin-top:8px;}
+.chat-input-row input{ flex:1; background:var(--card-2); border:0.5px solid var(--border); border-radius:8px; color:var(--text); padding:9px 11px; font-size:13.5px; }
+.knowledge-entry{ margin-bottom:14px; padding-bottom:14px; border-bottom:0.5px solid var(--border);}
+.knowledge-entry:last-child{ border-bottom:none; }
+.knowledge-entry .ke-title{ font-weight:700; font-size:13.5px; margin-bottom:4px; }
+.knowledge-entry .ke-terms{ font-size:12.5px; color:var(--text-dim); line-height:1.6;}
+.coming-soon{ text-align:center; color:var(--text-faint); padding: 40px 10px; font-size:13.5px;}
+.boss-q{ margin-bottom:14px; }
+.boss-q .bq-text{ font-size:13.5px; margin-bottom:6px; font-weight:600;}
+.boss-q textarea{ width:100%; min-height:70px; background:var(--card-2); border:0.5px solid var(--border); border-radius:8px; color:var(--text); padding:9px 11px; font-size:13.5px; resize:vertical; }
+.boss-feedback{ margin-top:10px; padding:10px 12px; border-radius:8px; font-size:13px; line-height:1.5;}
+.boss-feedback.pass{ background: rgba(29,158,117,.15); border:1px solid var(--green); }
+.boss-feedback.fail{ background: rgba(225,85,84,.15); border:1px solid var(--red); }
+.xp-pill{ display:inline-flex; align-items:center; gap:4px; background: var(--card-2); border-radius:20px; padding:3px 10px; font-size:11.5px; font-weight:700; color: var(--orange); }
+.muster-pill{ display:inline-flex; align-items:center; background: var(--card-2); border-radius:20px; padding:3px 10px; font-size:11px; font-weight:700; color:var(--text-dim); margin-left:6px; }
+.spinner{ width:34px; height:34px; border-radius:50%; border:3px solid var(--card-2); border-top-color: var(--blue); animation: spin 0.8s linear infinite; margin: 20px auto; }
+@keyframes spin{ to{ transform: rotate(360deg);} }
+.gen-loading{ text-align:center; padding: 30px 10px; color:var(--text-dim); font-size:13px; }
+
+/* Upload flow */
+.upload-steps{ display:flex; gap:6px; margin-bottom:16px; }
+.upload-step-dot{ flex:1; height:4px; border-radius:3px; background:var(--card-2);}
+.upload-step-dot.done{ background: var(--blue); }
+.upload-step-dot.active{ background: var(--purple); }
+.dropzone{ border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 40px 16px; text-align:center; color:var(--text-dim); font-size:14px; cursor:pointer; }
+.dropzone:hover{ border-color: var(--blue); color:var(--blue); }
+.dropzone input[type=file]{ display:none; }
+.days-picker{ display:flex; align-items:center; gap:14px; justify-content:center; margin: 20px 0;}
+.days-picker button{ width:38px; height:38px; border-radius:50%; font-size:18px; font-weight:700;}
+.days-picker .days-num{ font-size:32px; font-weight:800; min-width:70px; text-align:center;}
+.days-endinfo{ text-align:center; color:var(--text-dim); font-size:13px; margin-bottom:6px;}
+.progress-log{ font-size:12.5px; color:var(--text-dim); line-height:1.7; max-height:200px; overflow-y:auto;}
+.progress-log .ok{ color: var(--green); }
+.progress-log .err{ color: var(--red); }
+
+/* Onboarding */
+.onboard-choice{ display:flex; gap:12px; margin: 20px 0; }
+.onboard-choice button{ flex:1; padding: 20px 10px; font-size:15px; font-weight:700; border-radius: var(--radius);}
+
+@media (max-width: 600px){
+  .char-grid{ grid-template-columns: 1fr; }
+  .char-figure-wrap{ order:-1; }
+  .char-figure-wrap svg{ width:110px; height:190px; }
+  #quest-panel{ left:12px; right:12px; width:auto; bottom:12px; max-height:50vh; }
+  .substat-wrap{ grid-template-columns:1fr; }
+  #app{ padding: 14px 14px 90px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <h1>⚔️ Questlines</h1>
+    <button class="btn" id="btn-upload-top" onclick="openUploadFlow()">+ Studienbrief</button>
+  </div>
+
+  <div id="view-character"></div>
+  <div id="view-skilltree" class="hidden"></div>
+</div>
+
+<div id="quest-panel" class="hidden"></div>
+<div id="modal-root"></div>
+
+<script>
+/* =========================================================================
+   CONSTANTS
+========================================================================= */
+const STATS = {
+  med: { label: 'Medizin',      color: '#1D9E75' },
+  nat: { label: 'Natur',        color: '#EF9F27' },
+  ges: { label: 'Gesellschaft', color: '#D67ABF' },
+  wei: { label: 'Kultur',       color: '#7F77DD' },
+  int: { label: 'Abstraktion',  color: '#378ADD' },
+};
+const BODY_STAT_META = {
+  kraft:        { label: 'Kraft',        color: '#E15554', icon: '💪' },
+  ausdauer:     { label: 'Ausdauer',     color: '#1D9E75', icon: '🏃' },
+  koordination: { label: 'Koordination', color: '#EF9F27', icon: '🤸' },
+};
+const INTELLIGENCE_META = { label: 'Intelligenz', color: '#378ADD', icon: '🧠' };
+const STAT_ICONS = { med: '⚕️', nat: '🌿', ges: '🏛️', wei: '🎭', int: '🧩' };
+const MODULE_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#7F77DD', '#D67ABF'];
+
+const MODEL = 'claude-sonnet-4-6';
+
+/* =========================================================================
+   STATE
+   Modul-Datenstruktur (v4 — Questgeber-Modell):
+   {
+     id, title, subject, color,
+     startDate, targetDate,        // Fortschritts-Ziel statt Kalenderplan
+     pdfText,                      // für Struktur-Retry
+     chapters: [{
+       id, title, stat, color, icon, _generationFailed,
+       subnodes: [{
+         id, title, icon, globalIndex,     // globalIndex = Position im ganzen Studienbrief (1-based)
+         kernpunkte: [{ id, label, covered }],
+         questgeber: [{ id, label, kernpunkteIds: [...], currentQuest: null|questObj }],
+         exercise: null | { id, title, text, questions, keyPoints }  // optionaler Kapitel-Boss
+       }]
+     }],
+     log: [{ questgeberId, subnodeId, title, xp, stat, date }]   // abgeschlossene Quests, für XP & Wissenskarte
+   }
+========================================================================= */
+let modules = [];
+let activeModuleId = null;
+let gender = null;
+let bodyXP = { kraft: 0, ausdauer: 0, koordination: 0 };
+let currentView = 'character';
+
+let questPanelCollapsed = false;
+let openStatCategory = false;
+let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
+
+/* =========================================================================
+   STORAGE
+========================================================================= */
+// Netlify-Version: eigener Blob-Storage-Endpunkt statt window.storage
+async function saveState() {
+  const payload = { modules, activeModuleId, gender, bodyXP };
+  try {
+    await fetch('/api/storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'mg_v4', value: JSON.stringify(payload) })
+    });
+  } catch (e) {
+    console.error('Speichern fehlgeschlagen', e);
+  }
+}
+async function loadState() {
+  try {
+    const resp = await fetch('/api/storage?key=mg_v4');
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data && data.value) return JSON.parse(data.value);
+  } catch (e) { /* kein gespeicherter Zustand */ }
+  return null;
+}
+
+/* =========================================================================
+   UTIL
+========================================================================= */
+function uid(prefix) { return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+function xpToLevel(xpTotal) {
+  let xp = xpTotal, level = 1, threshold = 100;
+  while (xp >= threshold) { xp -= threshold; level++; threshold += 50; }
+  return { level, xpIntoLevel: xp, xpForThisLevel: threshold };
+}
+
+function isoDate(d) {
+  if (typeof d === 'string') return d;
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return isoDate(d); }
+function daysBetween(a, b) { const da = new Date(a + 'T00:00:00'), db = new Date(b + 'T00:00:00'); return Math.round((db - da) / 86400000); }
+function todayIso() { return isoDate(new Date()); }
+function formatDateShort(iso) { const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit' }); }
+function escapeHtml(s) { if (s == null) return ''; return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n-1) + '…' : (s||''); }
+
+function getModule(id) { return modules.find(m => m.id === id); }
+
+/* =========================================================================
+   EIGENE BESTÄTIGUNGS-/HINWEIS-DIALOGE
+   (native confirm()/alert() funktionieren in der Claude.ai-Artefakt-Sandbox
+   oft nicht — deshalb eigenes Overlay statt Browser-Dialog)
+========================================================================= */
+function showConfirmDialog(message, onConfirm) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) document.getElementById('modal-root').innerHTML=''">
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-body" style="padding-top:20px;">
+          <p style="font-size:14px;line-height:1.5;margin:0 0 18px;">${escapeHtml(message)}</p>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button class="btn btn-ghost" onclick="document.getElementById('modal-root').innerHTML=''">Abbrechen</button>
+            <button class="btn btn-danger" id="confirm-dialog-yes">Ja, fortfahren</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('confirm-dialog-yes').onclick = () => {
+    document.getElementById('modal-root').innerHTML = '';
+    onConfirm();
+  };
+}
+function showAlertDialog(message) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) document.getElementById('modal-root').innerHTML=''">
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-body" style="padding-top:20px;">
+          <p style="font-size:14px;line-height:1.5;margin:0 0 18px;">${escapeHtml(message)}</p>
+          <div style="display:flex;justify-content:flex-end;">
+            <button class="btn btn-primary" onclick="document.getElementById('modal-root').innerHTML=''">OK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Alle Unterkapitel eines Moduls in Dokument-Reihenfolge, flach
+function flatSubnodes(m) {
+  const list = [];
+  for (const ch of m.chapters) for (const sn of ch.subnodes) list.push({ chapter: ch, subnode: sn });
+  return list;
+}
+
+function subnodeCovered(sn) {
+  if (!sn.kernpunkte || sn.kernpunkte.length === 0) return false;
+  return sn.kernpunkte.every(kp => kp.covered);
+}
+function subnodeProgress(sn) {
+  if (!sn.kernpunkte || sn.kernpunkte.length === 0) return 0;
+  const done = sn.kernpunkte.filter(kp => kp.covered).length;
+  return done / sn.kernpunkte.length;
+}
+function chapterProgress(ch) {
+  let total = 0, done = 0;
+  for (const sn of ch.subnodes) { total += sn.kernpunkte.length; done += sn.kernpunkte.filter(k=>k.covered).length; }
+  return total === 0 ? 0 : done / total;
+}
+
+// Modul-Level = Anzahl der von Anfang an lückenlos abgeschlossenen Unterkapitel
+function computeModuleLevel(m) {
+  const flat = flatSubnodes(m);
+  let level = 0;
+  for (const { subnode } of flat) {
+    if (subnodeCovered(subnode)) level++;
+    else break;
+  }
+  return level;
+}
+function moduleMaxLevel(m) { return flatSubnodes(m).length; }
+
+// Ist das Unterkapitel mit gegebenem globalIndex erreichbar? (erstes immer, sonst Vorgänger fertig)
+function isSubnodeUnlocked(m, globalIndex) {
+  if (globalIndex <= 1) return true;
+  return computeModuleLevel(m) >= globalIndex - 1;
+}
+
+function findQuestgeber(questgeberId) {
+  for (const m of modules) {
+    for (const ch of m.chapters) {
+      for (const sn of ch.subnodes) {
+        for (const qg of sn.questgeber) {
+          if (qg.id === questgeberId) return { module: m, chapter: ch, subnode: sn, questgeber: qg };
+        }
+        if (sn.exercise && sn.exercise.id === questgeberId) {
+          return { module: m, chapter: ch, subnode: sn, exercise: sn.exercise, isBoss: true };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function totalXP() {
+  const sXP = statXP();
+  return Object.values(sXP).reduce((a,b)=>a+b,0);
+}
+function statXP() {
+  const sums = { med:0, nat:0, ges:0, wei:0, int:0 };
+  for (const m of modules) {
+    for (const entry of (m.log || [])) {
+      if (sums[entry.stat] != null) sums[entry.stat] += (entry.xp || 0);
+    }
+  }
+  return sums;
+}
+
+/* =========================================================================
+   RENDER: CHARACTER VIEW
+========================================================================= */
+function renderCharacter() {
+  const el = document.getElementById('view-character');
+  if (gender === null) { el.innerHTML = renderOnboarding(); return; }
+
+  const sXP = statXP();
+  const intTotal = Object.values(sXP).reduce((a,b)=>a+b, 0);
+  const grand = intTotal + bodyXP.kraft + bodyXP.ausdauer + bodyXP.koordination;
+  const lv = xpToLevel(grand);
+  const pct = Math.round((lv.xpIntoLevel / lv.xpForThisLevel) * 100);
+
+  el.innerHTML = `
+    <div class="char-grid">
+      <div class="body-stats-col">
+        <div class="section-label" style="margin:0 0 2px;">Körper <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-faint);">(Platzhalter)</span></div>
+        ${renderBodyStatsColumn()}
+      </div>
+      <div class="char-figure-wrap">
+        ${figureSvg(gender)}
+        <div class="level-badge">
+          <div class="lv-num">Lvl ${lv.level}</div>
+          <div class="lv-label">Gesamtfortschritt</div>
+          <div class="xp-bar-outer"><div class="xp-bar-inner" style="width:${pct}%"></div></div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">${lv.xpIntoLevel} / ${lv.xpForThisLevel} XP</div>
+        </div>
+      </div>
+      <div class="stats-panel">
+        ${renderIntelligenceStat(sXP, intTotal)}
+      </div>
+    </div>
+
+    <div class="section-label">Deine Studienbriefe</div>
+    ${modules.length === 0 ? `
+      <div class="card" style="text-align:center;padding:30px 16px;color:var(--text-dim);">
+        <div style="font-size:26px;margin-bottom:8px;">📚</div>
+        <div style="font-size:14px;margin-bottom:14px;">Noch kein Studienbrief hochgeladen.</div>
+        <button class="btn btn-primary" onclick="openUploadFlow()">＋ Ersten Studienbrief hochladen</button>
+        <div style="margin-top:10px;">
+          <button class="btn btn-ghost btn-sm" onclick="openImportFlow()">📋 Per Text importieren (von Claude im Chat generiert)</button>
+        </div>
+      </div>
+    ` : `
+      <div class="module-scroll">
+        ${modules.map(m => renderModuleTile(m)).join('')}
+        <div class="upload-tile" onclick="openUploadFlow()">
+          <div style="font-size:22px;">＋</div>
+          <div>Studienbrief hochladen</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="openImportFlow()">📋 Per Text importieren</button>
+      </div>
+    `}
+  `;
+  renderQuestPanel();
+}
+
+function renderOnboarding() {
+  return `
+    <div class="card" style="max-width:480px;margin:40px auto;text-align:center;">
+      <h2 style="margin-top:0;">Willkommen 👋</h2>
+      <p style="color:var(--text-dim);font-size:14px;line-height:1.6;">
+        Bevor's losgeht: Für die spätere Trainingsplanung (Kraft/Ausdauer/Koordination) brauchen wir dein
+        biologisches Geschlecht — das beeinflusst z.B. Referenzwerte für Belastungssteuerung. Es hat keinen
+        Einfluss auf dein Lern-XP.
+      </p>
+      <div class="onboard-choice">
+        <button class="btn btn-primary" onclick="chooseGender('male')">♂ Männlich</button>
+        <button class="btn btn-primary" onclick="chooseGender('female')">♀ Weiblich</button>
+      </div>
+    </div>
+  `;
+}
+async function chooseGender(g) { gender = g; await saveState(); renderCharacter(); }
+
+function renderBodyStatsColumn() {
+  const maxVal = Math.max(50, ...Object.values(bodyXP));
+  return Object.keys(BODY_STAT_META).map(key => {
+    const meta = BODY_STAT_META[key];
+    const val = bodyXP[key] || 0;
+    const pct = Math.min(100, Math.round((val / maxVal) * 100));
+    return `
+      <div class="stat-row-main" style="cursor:default;">
+        <span class="name"><span class="stat-icon" style="color:${meta.color}">${meta.icon}</span>${meta.label}</span>
+        <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <span style="font-size:11px;color:var(--text-dim);">${val} XP</span>
+          <span class="stat-mini-bar"><div style="width:${pct}%;background:${meta.color}"></div></span>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderIntelligenceStat(sXP, intTotal) {
+  const rows = Object.keys(STATS).map(key => {
+    const s = STATS[key];
+    const val = sXP[key] || 0;
+    return `
+      <div class="substat">
+        <span style="display:flex;align-items:center;gap:6px;"><span class="stat-icon" style="color:${s.color};font-size:13px;width:16px;">${STAT_ICONS[key] || '●'}</span>${s.label}</span>
+        <span>${val} XP</span>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div>
+      <div class="stat-row-main" onclick="toggleStatCategory()">
+        <span class="name"><span class="stat-icon" style="color:${INTELLIGENCE_META.color}">${INTELLIGENCE_META.icon}</span>${INTELLIGENCE_META.label}</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:12px;color:var(--text-dim);">${intTotal} XP</span>
+          <span style="font-size:11px;">${openStatCategory ? '▲' : '▼'}</span>
+        </span>
+      </div>
+      ${openStatCategory ? `<div class="substat-wrap">${rows}</div>` : ''}
+    </div>
+  `;
+}
+function toggleStatCategory() { openStatCategory = !openStatCategory; renderCharacter(); }
+
+function figureSvg(g) {
+  const strokeColor = '#e8e6e0';
+  if (g === 'female') {
+    return `<svg viewBox="0 0 100 180" fill="none" stroke="${strokeColor}" stroke-width="3" stroke-linecap="round">
+      <circle cx="50" cy="20" r="14"/><path d="M50 34 L50 95"/><path d="M50 45 L30 40 M50 45 L70 40"/>
+      <path d="M50 95 L35 110 L38 150"/><path d="M50 95 L65 110 L62 150"/><path d="M50 60 Q30 90 38 100 M50 60 Q70 90 62 100"/>
+    </svg>`;
+  }
+  return `<svg viewBox="0 0 100 180" fill="none" stroke="${strokeColor}" stroke-width="3" stroke-linecap="round">
+    <circle cx="50" cy="20" r="14"/><path d="M50 34 L50 95"/><path d="M50 45 L28 75 M50 45 L72 75"/>
+    <path d="M50 95 L32 150"/><path d="M50 95 L68 150"/>
+  </svg>`;
+}
+
+// Fortschritts-Ziel Pace: vergleicht erreichtes Modul-Level mit dem, was laut Zieldatum erwartet wäre
+function modulePaceInfo(m) {
+  const maxLevel = moduleMaxLevel(m);
+  const level = computeModuleLevel(m);
+  if (!m.targetDate || maxLevel === 0) return { pct: maxLevel ? Math.round((level/maxLevel)*100) : 0, status: null, text: '' };
+  const totalDays = Math.max(1, daysBetween(m.startDate, m.targetDate));
+  const elapsed = Math.min(totalDays, Math.max(0, daysBetween(m.startDate, todayIso())));
+  const expectedLevel = Math.min(maxLevel, (elapsed / totalDays) * maxLevel);
+  const diff = level - expectedLevel;
+  let status = 'ontrack', text = 'im Plan';
+  if (diff >= 1) { status = 'ahead'; text = 'voraus'; }
+  else if (diff <= -1) { status = 'behind'; text = 'im Rückstand'; }
+  const daysLeft = daysBetween(todayIso(), m.targetDate);
+  return {
+    pct: Math.round((level/maxLevel)*100),
+    goalPct: Math.round((expectedLevel/maxLevel)*100),
+    status, text,
+    daysLeft
+  };
+}
+
+function renderModuleTile(m) {
+  const maxLevel = moduleMaxLevel(m);
+  const level = computeModuleLevel(m);
+  const pace = modulePaceInfo(m);
+  const hasFailedChapter = m.chapters.some(c => c._generationFailed);
+  return `
+    <div class="module-tile" onclick="openSkilltree('${m.id}')">
+      <div class="tile-del-btn" onclick="event.stopPropagation();deleteModule('${m.id}')" title="Studienbrief entfernen">✕</div>
+      <div class="m-title">${escapeHtml(m.title)}</div>
+      <div class="m-sub">${escapeHtml(m.subject || '')}</div>
+      <div class="m-bar-outer">
+        <div class="m-bar-inner" style="width:${pace.pct}%;background:${m.color}"></div>
+        ${pace.goalPct != null ? `<div class="m-goal-marker" style="left:${pace.goalPct}%"></div>` : ''}
+      </div>
+      <div class="m-meta"><span>Level ${level}/${maxLevel}</span>${pace.daysLeft != null ? `<span>${pace.daysLeft >= 0 ? pace.daysLeft + ' Tage übrig' : 'Ziel überschritten'}</span>` : ''}</div>
+      ${pace.status ? `<div class="m-pace ${pace.status}">${pace.status === 'ahead' ? '↑' : pace.status === 'behind' ? '↓' : '→'} ${pace.text}</div>` : ''}
+      ${hasFailedChapter ? `<div style="position:absolute;bottom:10px;right:10px;color:var(--red);font-size:14px;">⚠</div>` : ''}
+    </div>
+  `;
+}
+
+async function deleteModule(moduleId) {
+  const m = getModule(moduleId);
+  if (!m) return;
+  showConfirmDialog(`"${m.title}" wirklich entfernen? Der Fortschritt in diesem Studienbrief geht dabei verloren.`, async () => {
+    modules = modules.filter(x => x.id !== moduleId);
+    if (activeModuleId === moduleId) activeModuleId = null;
+    await saveState();
+    renderCharacter();
+  });
+}
+
+// Setzt allen Fortschritt eines Moduls zurück (Kernpunkte, offene Quests, Boss-Status, XP-Log) —
+// die Struktur (Kapitel/Unterkapitel/Kernpunkte/Questgeber) bleibt erhalten, keine Neu-Generierung nötig.
+async function resetModuleProgress(moduleId) {
+  const m = getModule(moduleId);
+  if (!m) return;
+  showConfirmDialog(`Fortschritt von "${m.title}" wirklich zurücksetzen? Alle abgehakten Themen, offenen Quests und der XP-Verlauf dieses Studienbriefs gehen verloren — als wäre er gerade frisch hochgeladen.`, async () => {
+    for (const ch of m.chapters) {
+      for (const sn of ch.subnodes) {
+        for (const kp of sn.kernpunkte) kp.covered = false;
+        for (const qg of sn.questgeber) qg.currentQuest = null;
+        if (sn.exercise) sn.exercise.passed = false;
+      }
+    }
+    m.log = [];
+    await saveState();
+    currentModuleTab = 'tree';
+    renderSkilltree();
+    renderQuestPanel();
+  });
+}
+
+/* =========================================================================
+   RENDER: QUEST PANEL (fixed, bottom-right) — zeigt offene (angenommene, nicht
+   abgeschlossene) Quests aus freigeschalteten Questgebern über alle Module
+========================================================================= */
+function renderQuestPanel() {
+  const panel = document.getElementById('quest-panel');
+  const activeList = [];
+  for (const m of modules) {
+    for (const ch of m.chapters) {
+      for (const sn of ch.subnodes) {
+        if (!isSubnodeUnlocked(m, sn.globalIndex)) continue;
+        for (const qg of sn.questgeber) {
+          if (qg.currentQuest && qg.currentQuest.accepted) {
+            activeList.push({ m, ch, sn, qg });
+          }
+        }
+      }
+    }
+  }
+  if (activeList.length === 0) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  panel.classList.toggle('collapsed', questPanelCollapsed);
+  panel.innerHTML = `
+    <div class="qp-head" onclick="toggleQuestPanel()">
+      <span class="title">🎯 Offene Quests (${activeList.length})</span>
+      <span style="font-size:12px;color:var(--text-dim);">${questPanelCollapsed ? '▲' : '▼'}</span>
+    </div>
+    <div class="qp-body">
+      ${activeList.map(item => `
+        <div class="qp-item" onclick="openQuestModal('${item.qg.id}')">
+          <div class="qi-title">${escapeHtml(item.qg.currentQuest.title)}</div>
+          <div class="qi-meta">${escapeHtml(item.m.title)} · ${item.qg.currentQuest.durationMin || '?'} min · <span class="xp-pill" style="padding:1px 6px;">+${item.qg.currentQuest.xp||0} XP</span></div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+function toggleQuestPanel() { questPanelCollapsed = !questPanelCollapsed; renderQuestPanel(); }
+
+/* =========================================================================
+   RENDER: SKILLTREE
+========================================================================= */
+function openSkilltree(moduleId) {
+  activeModuleId = moduleId;
+  currentView = 'skilltree';
+  currentModuleTab = 'tree';
+  document.getElementById('view-character').classList.add('hidden');
+  document.getElementById('view-skilltree').classList.remove('hidden');
+  renderSkilltree();
+}
+function backToCharacter() {
+  currentView = 'character';
+  document.getElementById('view-skilltree').classList.add('hidden');
+  document.getElementById('view-character').classList.remove('hidden');
+  renderCharacter();
+}
+
+function renderSkilltree() {
+  const m = getModule(activeModuleId);
+  const el = document.getElementById('view-skilltree');
+  if (!m) { el.innerHTML = ''; return; }
+
+  const level = computeModuleLevel(m);
+  const maxLevel = moduleMaxLevel(m);
+  const levelPct = maxLevel ? Math.round((level/maxLevel)*100) : 0;
+
+  const tabsHtml = `
+    <div class="tree-topbar">
+      <button class="btn btn-ghost" onclick="backToCharacter()">← Zurück</button>
+      <span class="tt-title">${escapeHtml(m.title)}</span>
+      <button class="btn btn-ghost btn-sm" onclick="resetModuleProgress('${m.id}')" title="Fortschritt zurücksetzen (zum Testen)">↺ Reset</button>
+    </div>
+    <div class="tree-level-bar">
+      <span class="lvl-num">Level ${level}/${maxLevel}</span>
+      <div class="lvl-track"><div class="lvl-fill" style="width:${levelPct}%"></div></div>
+    </div>
+    <div class="qm-tabs" style="margin-bottom:14px;border-radius:var(--radius-sm);border:0.5px solid var(--border);overflow:hidden;">
+      <div class="qm-tab ${currentModuleTab==='tree'?'active':''}" onclick="switchModuleTab('tree')">🌳 Skilltree</div>
+      <div class="qm-tab ${currentModuleTab==='questgeber'?'active':''}" onclick="switchModuleTab('questgeber')">🧭 Entdecken</div>
+    </div>
+  `;
+
+  if (currentModuleTab === 'questgeber') {
+    el.innerHTML = tabsHtml + renderQuestgeberDiscoverList(m);
+    return;
+  }
+
+  const chapterSpacingY = 220, subnodeSpacingX = 130, marginTop = 70, marginLeft = 160;
+  let svgWidth = 700, nodes = [], links = [];
+
+  m.chapters.forEach((ch, ci) => {
+    const cx = marginLeft, cy = marginTop + ci * chapterSpacingY;
+    nodes.push({ x: cx, y: cy, r: 30, type: 'chapter', data: ch });
+    ch.subnodes.forEach((sn, si) => {
+      const sx = cx + 160 + si * subnodeSpacingX, sy = cy;
+      nodes.push({ x: sx, y: sy, r: 18, type: 'subnode', data: sn, parent: ch });
+      links.push({ x1: cx, y1: cy, x2: sx, y2: sy, color: ch.color });
+      svgWidth = Math.max(svgWidth, sx + 120);
+    });
+  });
+  for (let i = 0; i < m.chapters.length - 1; i++) {
+    const a = nodes.find(n => n.type === 'chapter' && n.data === m.chapters[i]);
+    const b = nodes.find(n => n.type === 'chapter' && n.data === m.chapters[i+1]);
+    links.unshift({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, color: '#3a3a42', spine: true });
+  }
+  const svgHeight = marginTop + m.chapters.length * chapterSpacingY;
+  const linksSvg = links.map(l => `<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${l.spine ? l.color : l.color+'88'}" stroke-width="${l.spine?3:2}" />`).join('');
+
+  const nodesSvg = nodes.map(n => {
+    if (n.type === 'chapter') {
+      const prog = chapterProgress(n.data);
+      const failed = n.data._generationFailed;
+      const ring = failed ? 'var(--red)' : n.data.color;
+      const icon = failed ? '⚠' : (n.data.icon || STAT_ICONS[n.data.stat] || '📖');
+      return `
+        <g class="tree-node" style="--hover-r:34" onclick="${failed ? `retryChapter('${n.data.id}')` : ''}"
+           onmousemove="showTooltip(evt, '${escapeHtml(n.data.title)}', '${Math.round(prog*100)}% abgeschlossen${failed?' — Klick zum erneuten Generieren':''}')"
+           onmouseleave="hideTooltip()">
+          <circle class="node-ring" cx="${n.x}" cy="${n.y}" r="30" fill="#1a1a1e" stroke="${ring}" stroke-width="3"/>
+          <circle cx="${n.x}" cy="${n.y}" r="30" fill="none" stroke="${ring}" stroke-width="4"
+                  stroke-dasharray="${Math.round(prog*188.5)} 188.5" stroke-linecap="round" transform="rotate(-90 ${n.x} ${n.y})" opacity="0.9"/>
+          <text x="${n.x}" y="${n.y+8}" text-anchor="middle" font-size="22">${icon}</text>
+        </g>`;
+    } else {
+      const prog = subnodeProgress(n.data);
+      const hasBoss = !!n.data.exercise;
+      const color = n.parent.color;
+      const unlocked = isSubnodeUnlocked(getModule(activeModuleId), n.data.globalIndex);
+      const icon = !unlocked ? '🔒' : (prog >= 1 ? '✓' : (n.data.icon || STAT_ICONS[n.parent.stat] || '📖'));
+      return `
+        <g class="tree-node" style="--hover-r:22;${unlocked?'':'opacity:.4;'}" onclick="openSubnodeChecklist('${n.data.id}')"
+           onmousemove="showTooltip(evt, '${escapeHtml(n.data.title)}', '${unlocked ? Math.round(prog*100)+'% — Klick für Themen-Checkliste' : 'Gesperrt — vorheriges Unterkapitel zuerst abschließen'}')"
+           onmouseleave="hideTooltip()">
+          <circle class="node-ring" cx="${n.x}" cy="${n.y}" r="18" fill="#1a1a1e" stroke="${color}" stroke-width="2.5"/>
+          <circle cx="${n.x}" cy="${n.y}" r="18" fill="none" stroke="${color}" stroke-width="3"
+                  stroke-dasharray="${Math.round(prog*113)} 113" stroke-linecap="round" transform="rotate(-90 ${n.x} ${n.y})" opacity="0.9"/>
+          <text x="${n.x}" y="${n.y+5}" text-anchor="middle" font-size="14">${icon}</text>
+          ${hasBoss ? `<text x="${n.x+13}" y="${n.y-11}" text-anchor="middle" font-size="13">💀</text>` : ''}
+        </g>`;
+    }
+  }).join('');
+
+  el.innerHTML = tabsHtml + `
+    <div id="tree-scroll" style="position:relative;height:60vh;">
+      <svg viewBox="0 0 ${svgWidth} ${svgHeight}" width="${svgWidth}" height="${svgHeight}">
+        ${linksSvg}
+        ${nodesSvg}
+      </svg>
+    </div>
+  `;
+}
+function switchModuleTab(tab) { currentModuleTab = tab; renderSkilltree(); }
+
+function showTooltip(evt, title, sub) {
+  hideTooltip();
+  const tip = document.createElement('div');
+  tip.className = 'node-tooltip'; tip.id = 'active-tooltip';
+  tip.innerHTML = `<b>${title}</b><br>${sub}`;
+  document.body.appendChild(tip);
+  tip.style.left = (evt.pageX + 14) + 'px'; tip.style.top = (evt.pageY + 10) + 'px';
+}
+function hideTooltip() { const t = document.getElementById('active-tooltip'); if (t) t.remove(); }
+
+/* =========================================================================
+   THEMEN-CHECKLISTE (Klick auf Unterkapitel-Knoten im Skilltree) — rein
+   informativ, keine Navigation zu Quests von hier aus
+========================================================================= */
+function openSubnodeChecklist(subnodeId) {
+  const m = getModule(activeModuleId);
+  for (const ch of m.chapters) {
+    for (const sn of ch.subnodes) {
+      if (sn.id === subnodeId) {
+        if (!isSubnodeUnlocked(m, sn.globalIndex)) return;
+        renderSubnodeChecklistModal(ch, sn);
+        return;
+      }
+    }
+  }
+}
+function closeSubnodeChecklist() { document.getElementById('modal-root').innerHTML = ''; }
+
+function renderSubnodeChecklistModal(ch, sn) {
+  const root = document.getElementById('modal-root');
+  // Kernpunkte gruppiert nach ihrem ursprünglichen Cluster (Questgeber-Label), nur zur Lesbarkeit
+  const groups = sn.questgeber.map(qg => ({
+    label: qg.label,
+    kernpunkte: qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean)
+  })).filter(g => g.kernpunkte.length);
+
+  const groupsHtml = groups.map(g => `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">${escapeHtml(g.label)}</div>
+      ${g.kernpunkte.map(kp => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;${kp.covered?'color:var(--text-dim);':''}">
+          <span style="color:${kp.covered?'var(--green)':'var(--text-faint)'};">${kp.covered ? '✓' : '○'}</span>
+          <span style="${kp.covered?'text-decoration:line-through;':''}">${escapeHtml(kp.label)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+
+  const total = sn.kernpunkte.length, done = sn.kernpunkte.filter(k=>k.covered).length;
+
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) closeSubnodeChecklist()">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;">${escapeHtml(ch.title)}</div>
+            <h2>${escapeHtml(sn.title)}</h2>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="closeSubnodeChecklist()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom:14px;font-size:13px;color:var(--text-dim);">${done}/${total} Themen abgehakt — Quests dazu findest du im "🧭 Entdecken"-Tab, sobald sie erreichbar sind.</div>
+          ${groupsHtml || `<div class="qp-empty">Keine Themen erfasst.</div>`}
+          ${sn.exercise ? `<div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);font-size:12.5px;color:var(--text-dim);">💀 Enthält außerdem einen Kapitel-Boss (Originalübung).</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* =========================================================================
+   QUESTGEBER-TAB ("Entdecken") — flache Liste aller freigeschalteten
+   Questgeber im Modul, unabhängig vom Skilltree-Klickpfad
+========================================================================= */
+function renderQuestgeberDiscoverList(m) {
+  const items = [];
+  for (const ch of m.chapters) {
+    for (const sn of ch.subnodes) {
+      if (!isSubnodeUnlocked(m, sn.globalIndex)) continue;
+      for (const qg of sn.questgeber) items.push({ ch, sn, qg, isBoss: false });
+      if (sn.exercise) items.push({ ch, sn, exercise: sn.exercise, isBoss: true });
+    }
+  }
+  if (items.length === 0) {
+    return `<div class="card" style="text-align:center;padding:30px 16px;color:var(--text-faint);">Noch keine Questgeber freigeschaltet.</div>`;
+  }
+  return `
+    <div>
+      ${items.map(it => {
+        if (it.isBoss) {
+          return `
+            <div class="qg-item" style="border-left:3px solid var(--red);" onclick="openQuestModal('${it.exercise.id}')">
+              <div class="qg-icon">💀</div>
+              <div class="qg-main">
+                <div class="qg-label">${escapeHtml(it.exercise.title)}</div>
+                <div class="qg-status">${escapeHtml(it.ch.title)} · ${escapeHtml(it.sn.title)} — Kapitel-Boss${it.exercise.passed ? ' · bestanden ✓' : ''}</div>
+              </div>
+            </div>
+          `;
+        }
+        const st = questgeberStatusFor(it.sn, it.qg);
+        const pct = st.total ? Math.round((st.done/st.total)*100) : 0;
+        return `
+          <div class="qg-item" onclick="openQuestModal('${it.qg.id}')">
+            <div class="qg-icon">${st.complete ? '✓' : '🧙'}</div>
+            <div class="qg-main">
+              <div class="qg-label">${escapeHtml(it.qg.name)}</div>
+              <div class="qg-status ${st.complete?'done':''}">Level ${it.sn.globalIndex}${st.complete ? ' — abgeschlossen, wiederholbar' : ''}</div>
+              <div class="qg-bar"><div style="width:${pct}%"></div></div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+function questgeberStatusFor(sn, qg) {
+  const kps = qg.kernpunkteIds;
+  const total = kps.length;
+  const done = kps.filter(id => { const kp = sn.kernpunkte.find(k=>k.id===id); return kp && kp.covered; }).length;
+  return { done, total, complete: total > 0 && done === total };
+}
+
+/* =========================================================================
+   QUEST MODAL (Questgeber-Tab generiert Quests on-demand)
+========================================================================= */
+let currentQuestCtx = null; // { module, chapter, subnode, questgeber, isBoss, exercise }
+let qmActiveTab = 'npc';
+let qmGenerating = false;
+let qmBossAnswer = '';
+let qmBossFeedback = null;
+
+async function openQuestModal(questgeberId) {
+  const loc = findQuestgeber(questgeberId);
+  if (!loc) return;
+  currentQuestCtx = loc;
+  qmActiveTab = 'npc';
+  qmBossAnswer = '';
+  qmBossFeedback = null;
+  document.getElementById('modal-root').innerHTML = ''; // ggf. Questgeber-Liste schließen
+  renderQuestModal();
+
+  if (!loc.isBoss && !loc.questgeber.currentQuest) {
+    await generateAndSetQuest(loc);
+  }
+}
+function closeQuestModal() { currentQuestCtx = null; document.getElementById('modal-root').innerHTML = ''; }
+
+function renderQuestModal() {
+  const root = document.getElementById('modal-root');
+  if (!currentQuestCtx) { root.innerHTML = ''; return; }
+  const { module: m, chapter: ch, subnode: sn, questgeber: qg, isBoss, exercise } = currentQuestCtx;
+
+  let bodyHtml = '';
+  let title = '';
+  let tabs = [];
+
+  if (isBoss) {
+    title = '⚔️ ' + exercise.title;
+    bodyHtml = renderBossPanel(exercise);
+  } else {
+    title = qg.name;
+    tabs = [{ id: 'npc', label: '🧙 Questgeber' }, { id: 'map', label: '🗺️ Wissenskarte' }, { id: 'ally', label: '🤝 Verbündeter' }];
+    if (qmGenerating) {
+      bodyHtml = `<div class="gen-loading"><div class="spinner"></div>Questgeber überlegt sich eine Aufgabe...</div>`;
+    } else if (qmActiveTab === 'npc') {
+      bodyHtml = renderNpcTab(qg);
+    } else if (qmActiveTab === 'map') {
+      bodyHtml = renderMapTab(m);
+    } else if (qmActiveTab === 'ally') {
+      bodyHtml = `<div class="coming-soon">🤝<br><br>Verbündeter kommt bald.<br>Später erklärt er dir das ganze Kapitel — vollständig, nichts ausgelassen.</div>`;
+    }
+  }
+
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) closeQuestModal()">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>${title}</h2>
+          <button class="btn btn-ghost btn-sm" onclick="closeQuestModal()">✕</button>
+        </div>
+        ${!isBoss ? `<div class="qm-tabs">${tabs.map(t => `<div class="qm-tab ${qmActiveTab===t.id?'active':''}" onclick="switchQmTab('${t.id}')">${t.label}</div>`).join('')}</div>` : ''}
+        <div class="modal-body">${bodyHtml}</div>
+      </div>
+    </div>
+  `;
+}
+function switchQmTab(t) { qmActiveTab = t; renderQuestModal(); }
+
+function renderNpcTab(qg) {
+  const q = qg.currentQuest;
+  if (!q) return `<div class="gen-loading">Kein aktuelles Anliegen. Sprich den Questgeber nochmal an.</div>`;
+
+  if (!q.accepted) {
+    return `
+      <div class="npc-hook">${escapeHtml(q.npcHook)}</div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;">
+        <button class="btn btn-primary" onclick="acceptQuest()">Quest annehmen</button>
+      </div>
+    `;
+  }
+  const chat = q.npcChat || [];
+  return `
+    <div style="margin-bottom:10px;">
+      <span class="xp-pill">+${q.xp || 0} XP</span>
+      <span class="muster-pill">Muster ${q.muster || '?'} · ${q.durationMin || '?'} min</span>
+    </div>
+    <div class="scenario-box">${escapeHtml(q.scenario || '')}</div>
+    <div class="npc-chat" id="npc-chat-box">
+      ${chat.map(m => `<div class="npc-msg ${m.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('')}
+    </div>
+    <div class="chat-input-row">
+      <input type="text" id="npc-chat-input" placeholder="Frag den Questgeber etwas..." onkeydown="if(event.key==='Enter') sendNpcChat()">
+      <button class="btn btn-sm" onclick="sendNpcChat()">Senden</button>
+    </div>
+    <div style="margin-top:16px;display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary" onclick="completeQuest()">Quest abschließen &amp; XP kassieren</button>
+    </div>
+  `;
+}
+
+async function acceptQuest() {
+  currentQuestCtx.questgeber.currentQuest.accepted = true;
+  await saveState();
+  renderQuestModal();
+  renderQuestPanel();
+}
+
+async function sendNpcChat() {
+  const input = document.getElementById('npc-chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  const q = currentQuestCtx.questgeber.currentQuest;
+  if (!q.npcChat) q.npcChat = [];
+  q.npcChat.push({ role: 'me', text });
+  renderQuestModal(); focusChatInput();
+
+  const prompt = `Du spielst die Rolle eines Questgebers (Laie ohne Fachwissen) in einer Lern-App.
+Dein Fall: ${q.scenario}
+Du kennst NUR deine eigene Alltagsperspektive, KEIN Fachwissen. Antworte kurz (1-3 Sätze), in Alltagssprache, aus der Ich-Perspektive des NPCs.
+Bisheriger Chat-Verlauf: ${JSON.stringify(q.npcChat.slice(-6))}
+Neue Nachricht vom Spieler: "${text}"
+Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen drumherum.`;
+  try {
+    const reply = await callClaude(prompt, 300);
+    q.npcChat.push({ role: 'npc', text: reply.trim() });
+  } catch (e) {
+    q.npcChat.push({ role: 'npc', text: '(Antwort konnte nicht geladen werden — versuch es nochmal.)' });
+  }
+  renderQuestModal(); focusChatInput();
+}
+function focusChatInput() { setTimeout(() => { const box = document.getElementById('npc-chat-box'); if (box) box.scrollTop = box.scrollHeight; }, 0); }
+
+function renderMapTab(m) {
+  const entries = [];
+  for (const ch of m.chapters) {
+    for (const sn of ch.subnodes) {
+      const coveredKp = sn.kernpunkte.filter(k => k.covered);
+      if (coveredKp.length === 0) continue;
+      entries.push({ ch, sn, coveredKp });
+    }
+  }
+  if (entries.length === 0) return `<div class="coming-soon">🗺️<br><br>Noch keine Einträge. Schließe Quests ab, um die Wissenskarte zu füllen.</div>`;
+  return entries.map(e => `
+    <div class="knowledge-entry">
+      <div class="ke-title">${escapeHtml(e.ch.title)} — ${escapeHtml(e.sn.title)}</div>
+      <div class="ke-terms">${e.coveredKp.map(k=>escapeHtml(k.label)).join(', ')}</div>
+    </div>
+  `).join('');
+}
+
+async function completeQuest() {
+  const { module: m, subnode: sn, questgeber: qg } = currentQuestCtx;
+  const q = qg.currentQuest;
+  if (!q) return;
+
+  // Kernpunkte als abgedeckt markieren
+  const targetIds = q.targetKernpunkteIds || [];
+  for (const kpId of targetIds) {
+    const kp = sn.kernpunkte.find(k => k.id === kpId);
+    if (kp) kp.covered = true;
+  }
+  // Log-Eintrag für XP/Wissenskarte
+  if (!m.log) m.log = [];
+  m.log.push({ questgeberId: qg.id, subnodeId: sn.id, title: q.title, xp: q.xp || 0, stat: q.stat, date: todayIso() });
+
+  qg.currentQuest = null; // nächster Besuch generiert eine frische Quest
+  await saveState();
+
+  closeQuestModal();
+  renderQuestPanel();
+  if (currentView === 'skilltree') renderSkilltree();
+  else renderCharacter();
+}
+
+/* =========================================================================
+   BOSS-PANEL (Kapitel-Boss, unverändert vom Konzept her)
+========================================================================= */
+function renderBossPanel(exercise) {
+  const questions = exercise.questions && exercise.questions.length ? exercise.questions : null;
+  return `
+    <div style="margin-bottom:12px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(exercise.text || '')}</div>
+    ${questions ? questions.map((qs,i) => `<div class="boss-q"><div class="bq-text">${i+1}. ${escapeHtml(qs)}</div></div>`).join('') : ''}
+    <div class="boss-q">
+      <div class="bq-text">Deine Antwort:</div>
+      <textarea id="boss-answer-input" placeholder="Schreib deine vollständige Antwort...">${escapeHtml(qmBossAnswer)}</textarea>
+    </div>
+    ${qmBossFeedback ? `<div class="boss-feedback ${qmBossFeedback.pass ? 'pass':'fail'}">${escapeHtml(qmBossFeedback.text)}</div>` : ''}
+    ${exercise.passed ? `<div style="margin-top:10px;color:var(--green);font-weight:700;font-size:13px;">✓ Bereits bestanden — du kannst es jederzeit erneut versuchen.</div>` : ''}
+    <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn" id="boss-submit-btn" onclick="submitBossAnswer()">Antwort einreichen</button>
+    </div>
+  `;
+}
+
+async function submitBossAnswer() {
+  const input = document.getElementById('boss-answer-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  qmBossAnswer = answer;
+  const btn = document.getElementById('boss-submit-btn');
+  btn.disabled = true; btn.textContent = 'Wird bewertet...';
+
+  const { exercise } = currentQuestCtx;
+  const prompt = `Du bewertest die Antwort eines Lernenden auf eine Prüfungsübung.
+Übung: ${exercise.text}
+${exercise.keyPoints ? 'Erwartete Kernpunkte: ' + exercise.keyPoints.join(', ') : ''}
+Antwort des Lernenden: "${answer}"
+
+Antworte NUR als JSON (keine Backticks): {"pass": true/false, "feedback": "kurzes, konstruktives Feedback auf Deutsch, 2-4 Sätze"}
+pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierung darf abweichen).`;
+
+  try {
+    const raw = await callClaude(prompt, 500);
+    const parsed = parseJsonLoose(raw);
+    qmBossFeedback = { pass: !!parsed.pass, text: parsed.feedback || '' };
+    if (parsed.pass) exercise.passed = true;
+    await saveState();
+  } catch (e) {
+    qmBossFeedback = { pass: false, text: 'Bewertung konnte nicht geladen werden. Versuch es nochmal.' };
+  }
+  btn.disabled = false; btn.textContent = 'Antwort einreichen';
+  renderQuestModal();
+}
+
+/* =========================================================================
+   AI / CLAUDE API
+========================================================================= */
+// Netlify-Version: Call läuft über die eigene Function (Key liegt serverseitig)
+async function callClaude(prompt, maxTokens) {
+  const resp = await fetch('/api/claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] })
+  });
+  if (!resp.ok) { const errText = await resp.text().catch(()=> ''); throw new Error('API-Fehler ' + resp.status + ': ' + errText); }
+  const data = await resp.json();
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+function parseJsonLoose(raw) {
+  let s = raw.trim();
+  s = s.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
+  const firstBrace = s.search(/[\{\[]/);
+  if (firstBrace > 0) s = s.slice(firstBrace);
+  const lastBrace = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+  if (lastBrace >= 0 && lastBrace < s.length - 1) s = s.slice(0, lastBrace + 1);
+  return JSON.parse(s);
+}
+
+/* =========================================================================
+   ON-DEMAND QUEST-GENERIERUNG
+========================================================================= */
+async function generateAndSetQuest(loc) {
+  qmGenerating = true;
+  renderQuestModal();
+  const { module: m, chapter: ch, subnode: sn, questgeber: qg } = loc;
+
+  // Zielkernpunkte: bevorzugt der eigene Schwerpunkt, aber der GESAMTE Unterkapitel-Pool ist erlaubt
+  // (Fragen sollen sich nicht auf genau einen Block beschränken) — nur "komplett identisch" zu anderen
+  // Questgebern soll vermieden werden, dafür kriegt der Prompt die Geschwister-Schwerpunkte + letzte Titel.
+  const own = qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
+  const wholeSubnodePool = sn.kernpunkte;
+  let targets = own.filter(k => !k.covered);
+  if (targets.length === 0) targets = wholeSubnodePool.filter(k => !k.covered);
+  let isReview = false;
+  const priorSubnodes = flatSubnodes(m).filter(x => x.subnode.globalIndex < sn.globalIndex).map(x => x.subnode);
+  if (targets.length === 0) {
+    isReview = true;
+    const pool = wholeSubnodePool.concat(priorSubnodes.flatMap(s => s.kernpunkte));
+    targets = shuffleArray(pool).slice(0, Math.min(4, Math.max(2, pool.length)));
+  }
+
+  const knownVocab = priorSubnodes.flatMap(s => s.kernpunkte.map(k => k.label));
+  const siblingNames = sn.questgeber.filter(x => x.id !== qg.id).map(x => x.name);
+  const recentTitlesHere = (m.log || []).filter(e => e.subnodeId === sn.id).slice(-5).map(e => e.title);
+
+  const prompt = `Du generierst EINE fallbasierte Lern-Quest für ein Lern-App-Questgeber-System (DHfPG Studium, Sport-/Gesundheitsmanagement).
+
+WICHTIGSTE REGEL — echtes persönliches Problem, KEINE Aufgabenliste:
+Der NPC hat ein echtes Anliegen aus seinem Leben und wendet sich direkt an DICH als die Fachperson, die er kennt (sein Trainer, sein Arzt, seine erfahrene Freundin/Kollege, etc.) — nicht an einen neutralen Dritten, der ein fremdes Dokument gegenchecken soll. Bevorzuge die direkte Perspektive: der NPC schreibt/fragt DICH persönlich, so als wärst du wirklich die Person, die er/sie um Rat bittet (Bsp: "Ich hab da bei meinem letzten Training was komisches gemerkt, kannst du mir erklären was da in meinem Körper passiert?" statt "Mein Kumpel hat mir ein Dokument geschickt, kannst du das für mich checken?"). Ausnahme: Wenn ein drittes Fachdokument (Arztbrief, Trainingsplan-Auszug etc.) inhaltlich zum Fall dazugehört, darf es Teil der Nachricht sein — aber die Bitte selbst bleibt direkt an dich gerichtet.
+Die komplette Quest ist EINE durchgehende Nachricht/Erzählung in der Stimme des NPCs (wie eine echte Chat-Nachricht oder ein echtes Gespräch) — KEINE separate Aufgabenliste, KEINE nummerierten Anweisungen ("1. Finde... 2. Erkläre..."), KEIN "Aufgabe:"-Abschnitt. Was zu tun ist, muss sich implizit aus der Bitte selbst ergeben (z.B. endet die Nachricht mit einer echten, offenen Frage wie "Stimmt das so, was mir mein Trainer erzählt hat?" oder "Kannst du mir sagen was da wirklich los ist?"), nicht aus einer expliziten Anweisung von außen.
+Terminologie in eingebetteten Fachdokumenten/Zitaten (z.B. was ein Arzt/Trainer geschrieben hat) darf und soll korrekt und fachsprachlich sein — nur der NPC selbst (die hilfesuchende Person) spricht als Laie.
+
+WICHTIGE REGEL — Quest-Spec:
+1. Die folgenden Zielkernpunkte MÜSSEN alle aktiv gebraucht werden, um dem NPC zu helfen (nicht nur erwähnt): ${JSON.stringify(targets.map(t=>t.label))}
+2. Wähle EIN Fallmuster: A (Decodier-Fall: du musst Fachsprache für den NPC einordnen/übersetzen, weil er direkt vor einer Entscheidung steht), B (Diagnose-Fall: du musst die echte Ursache unter mehreren Kandidaten finden und begründen, warum die anderen es nicht sind — eingebettet in ein echtes Anliegen, nicht als Zuordnungsübung formuliert), C (Anwendungsfall: du musst aktiv etwas für den NPC konstruieren/berechnen/planen), D (Merksatz, nur wenn kein Fall möglich ist).
+3. Die Nachricht muss ALLE Zielkernpunkte zwingend brauchen, um sie sinnvoll zu beantworten.
+${isReview ? '4. Das ist eine WIEDERHOLUNGS-Quest (Ziel bereits früher gelernt) — anderer NPC/andere Situation als zuvor, dieselben Begriffe in frischem Kontext.' : ''}
+
+Kontext: Unterkapitel "${sn.title}" aus Kapitel "${ch.title}" (Fach-Stat: ${ch.stat}).
+Dieser Questgeber heißt ${qg.name}. Interner Themenschwerpunkt (nur Hinweis für dich, nicht für den Spieler sichtbar): ${qg.label} — du darfst jedes Thema aus dem gesamten Unterkapitel einbauen, wenn es zur Nachricht passt.
+Andere Questgeber in diesem Unterkapitel (deine Nachricht sollte sich davon klar unterscheiden, nicht komplett identisch sein): ${siblingNames.length ? siblingNames.join(', ') : '(keine)'}
+Zuletzt in diesem Unterkapitel benutzte Quest-Titel (nicht wiederholen): ${recentTitlesHere.length ? recentTitlesHere.join(', ') : '(keine)'}
+Relevanter Studienbrief-Auszug: ${sn.sourceExcerpt || '(kein Auszug verfügbar, nutze dein Wissen zu diesem Thema)'}
+Begriffe, die der Spieler schon kennt und die OHNE Erklärung benutzt werden dürfen: ${knownVocab.length ? knownVocab.join(', ') : '(noch keine)'}
+
+KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine doppelten Anführungszeichen in String-Werten (einfache nutzen oder umschreiben).
+{
+  "title": "Kurzer Titel",
+  "xp": 15,
+  "muster": "A",
+  "npcHook": "Kurze persönliche Anfrage vor Annahme (1-2 Sätze), direkt an dich gerichtet, z.B. 'Kannst du mir kurz helfen? Ich hab grad was komisches erlebt beim Training.'",
+  "nachricht": "Die VOLLSTÄNDIGE Nachricht/Erzählung des NPCs an dich — ein durchgehender Text in seiner Stimme, keine Aufgabenliste, endet mit einer echten offenen Bitte/Frage.",
+  "durationMin": 15
+}`;
+
+  try {
+    const raw = await callClaude(prompt, 3000);
+    const parsed = parseJsonLoose(raw);
+    qg.currentQuest = {
+      id: uid('q'),
+      title: parsed.title || ('Anliegen von ' + qg.name),
+      xp: parsed.xp || 12,
+      stat: ch.stat,
+      durationMin: parsed.durationMin || 15,
+      muster: parsed.muster || 'A',
+      npcHook: parsed.npcHook || '',
+      scenario: parsed.nachricht || parsed.situation || '',
+      targetKernpunkteIds: targets.map(t => t.id),
+      accepted: false,
+      npcChat: []
+    };
+    await saveState();
+  } catch (e) {
+    console.error(e);
+    qg.currentQuest = {
+      id: uid('q'), title: 'Generierung fehlgeschlagen', xp: 0, stat: ch.stat, durationMin: 0, muster: 'D',
+      npcHook: 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.',
+      scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: []
+    };
+  }
+  qmGenerating = false;
+  renderQuestModal();
+}
+
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i+1)); [a[i],a[j]] = [a[j],a[i]]; }
+  return a;
+}
+
+/* =========================================================================
+   NORMALISIERUNG: rohes KI-/Import-JSON -> App-Datenmodell
+========================================================================= */
+const FALLBACK_NPC_NAMES = ['Mia','Jonas','Lea','Kevin','Sophie','Tim','Laura','Finn','Nina','Paul','Emma','Lukas','Hannah','Noah','Lena','Max','Julia','Ben','Sarah','Felix','Anna','David','Clara','Tom'];
+function fallbackNpcName(seed) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return FALLBACK_NPC_NAMES[hash % FALLBACK_NPC_NAMES.length];
+}
+
+function buildNormalizedSubnode(snRaw, chId, si, globalIndex) {
+  const snId = chId + '.' + (si + 1);
+  const kernpunkte = [];
+  const questgeberRaw = Array.isArray(snRaw.questgeber) ? snRaw.questgeber : [];
+  const questgeber = questgeberRaw.map((qgRaw, qi) => {
+    const qgId = snId + '.qg' + (qi + 1);
+    const kpIds = [];
+    (qgRaw.kernpunkte || []).forEach((label, ki) => {
+      const kpId = snId + '.k' + (kernpunkte.length + 1);
+      kernpunkte.push({ id: kpId, label: String(label), covered: false });
+      kpIds.push(kpId);
+    });
+    return { id: qgId, name: qgRaw.name || fallbackNpcName(qgId), label: qgRaw.label || ('Themenblock ' + (qi+1)), kernpunkteIds: kpIds, currentQuest: null };
+  });
+  if (questgeber.length === 0) {
+    // Fallback: falls kein questgeber-Array mitgeliefert wurde, alles in einen einzigen Questgeber packen
+    const kpIds = [];
+    (snRaw.kernpunkte || []).forEach(label => {
+      const kpId = snId + '.k' + (kernpunkte.length + 1);
+      kernpunkte.push({ id: kpId, label: String(label), covered: false });
+      kpIds.push(kpId);
+    });
+    const qgId = snId + '.qg1';
+    questgeber.push({ id: qgId, name: fallbackNpcName(qgId), label: snRaw.title || 'Questgeber', kernpunkteIds: kpIds, currentQuest: null });
+  }
+  return {
+    id: snId,
+    title: snRaw.title || ('Unterkapitel ' + snId),
+    icon: snRaw.icon || null,
+    globalIndex,
+    sourceExcerpt: snRaw.excerpt || null,
+    kernpunkte,
+    questgeber,
+    exercise: snRaw.exercise ? {
+      id: snId + '.boss',
+      title: snRaw.exercise.title || ('Kapitel-Boss'),
+      text: snRaw.exercise.text || '',
+      questions: snRaw.exercise.questions || [],
+      keyPoints: snRaw.exercise.keyPoints || [],
+      passed: false
+    } : null
+  };
+}
+
+function buildNormalizedChapter(chRaw, chId, startGlobalIndex) {
+  const stat = STATS[chRaw.stat] ? chRaw.stat : 'int';
+  const subnodesRaw = Array.isArray(chRaw.subnodes) ? chRaw.subnodes : [];
+  let gi = startGlobalIndex;
+  const subnodes = subnodesRaw.map((snRaw, si) => buildNormalizedSubnode(snRaw, chId, si, gi++));
+  return {
+    id: chId, title: chRaw.title || ('Kapitel ' + chId), stat,
+    color: chRaw.color || STATS[stat].color, icon: chRaw.icon || null,
+    _generationFailed: false, subnodes
+  };
+}
+
+function normalizeImportedModule(raw) {
+  let gi = 1;
+  const chapters = raw.chapters.map((chRaw, ci) => {
+    const ch = buildNormalizedChapter(chRaw, String(ci + 1), gi);
+    gi += ch.subnodes.length;
+    return ch;
+  });
+  return {
+    title: raw.title || 'Importierter Studienbrief',
+    subject: raw.subject || '',
+    color: raw.color || MODULE_COLORS[modules.length % MODULE_COLORS.length],
+    pdfText: raw.pdfText || null,
+    chapters
+  };
+}
+
+function appendChaptersToModule(targetModule, rawChapters) {
+  let nextChIdx = targetModule.chapters.length + 1;
+  let gi = flatSubnodes(targetModule).length + 1;
+  const newChapters = rawChapters.map(chRaw => {
+    const ch = buildNormalizedChapter(chRaw, String(nextChIdx++), gi);
+    gi += ch.subnodes.length;
+    return ch;
+  });
+  targetModule.chapters.push(...newChapters);
+  return newChapters;
+}
+
+/* =========================================================================
+   UPLOAD FLOW (PDF -> Struktur, keine Quest-Vorgenerierung mehr)
+========================================================================= */
+let uploadState = { step: 1, file: null, pdfText: '', daysTotal: 21, outline: null, newModule: null, progressLog: [] };
+
+function openUploadFlow() {
+  uploadState = { step: 1, file: null, pdfText: '', daysTotal: 21, outline: null, newModule: null, progressLog: [] };
+  renderUploadModal();
+}
+function closeUploadFlow() { document.getElementById('modal-root').innerHTML = ''; }
+
+function renderUploadModal() {
+  const root = document.getElementById('modal-root');
+  const s = uploadState.step;
+  const dots = [1,2,3,4].map(i => `<div class="upload-step-dot ${i<s?'done':i===s?'active':''}"></div>`).join('');
+  let body = '';
+  if (s === 1) body = renderUploadStep1();
+  else if (s === 2) body = renderUploadStep2();
+  else if (s === 3) body = renderUploadStep3();
+  else if (s === 4) body = renderUploadStep4();
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this && ${s!==3}) closeUploadFlow()">
+      <div class="modal" style="max-width:640px;">
+        <div class="modal-head">
+          <h2>Studienbrief hochladen</h2>
+          ${s !== 3 ? `<button class="btn btn-ghost btn-sm" onclick="closeUploadFlow()">✕</button>` : ''}
+        </div>
+        <div class="modal-body">
+          <div class="upload-steps">${dots}</div>
+          ${body}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderUploadStep1() {
+  return `
+    <label class="dropzone" for="pdf-file-input">
+      <div style="font-size:30px;margin-bottom:8px;">📄</div>
+      ${uploadState.file ? `<b>${escapeHtml(uploadState.file.name)}</b><br><span style="font-size:12px;">Klicke um eine andere Datei zu wählen</span>` : `Klicke, um einen Studienbrief (PDF) auszuwählen`}
+      <input id="pdf-file-input" type="file" accept="application/pdf" onchange="handleFileSelect(event)">
+    </label>
+    <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary" ${uploadState.file ? '' : 'disabled'} onclick="goToUploadStep(2)">Weiter</button>
+    </div>
+  `;
+}
+async function handleFileSelect(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  uploadState.file = file;
+  renderUploadModal();
+}
+function goToUploadStep(n) { uploadState.step = n; renderUploadModal(); }
+
+function renderUploadStep2() {
+  const end = addDays(todayIso(), uploadState.daysTotal);
+  return `
+    <p style="color:var(--text-dim);font-size:13.5px;">Bis wann willst du diesen Studienbrief komplett durchgearbeitet haben? Das ist dein Fortschritts-Ziel — es gibt keine feste Tages-Zuteilung mehr, du siehst nur, ob du im Plan liegst.</p>
+    <div class="days-picker">
+      <button class="btn" onclick="changeUploadDays(-1)">−</button>
+      <div class="days-num">${uploadState.daysTotal}</div>
+      <button class="btn" onclick="changeUploadDays(1)">+</button>
+    </div>
+    <div class="days-endinfo">Start heute · Ziel ca. ${formatDateShort(end)}</div>
+    <div style="margin-top:18px;display:flex;justify-content:space-between;">
+      <button class="btn btn-ghost" onclick="goToUploadStep(1)">Zurück</button>
+      <button class="btn btn-primary" onclick="startAnalysis()">Weiter zur Analyse</button>
+    </div>
+  `;
+}
+function changeUploadDays(delta) { uploadState.daysTotal = Math.max(1, Math.min(365, uploadState.daysTotal + delta)); renderUploadModal(); }
+
+function renderUploadStep3() {
+  return `
+    <div style="text-align:center;padding:10px 0;">
+      <div class="spinner"></div>
+      <div style="font-size:13.5px;color:var(--text-dim);margin-bottom:10px;">KI analysiert den Studienbrief...</div>
+      <div class="progress-log" id="progress-log">${uploadState.progressLog.map(l => `<div class="${l.type}">${escapeHtml(l.text)}</div>`).join('')}</div>
+    </div>
+  `;
+}
+function logProgress(text, type) {
+  uploadState.progressLog.push({ text, type: type || '' });
+  const box = document.getElementById('progress-log');
+  if (box) { box.innerHTML = uploadState.progressLog.map(l => `<div class="${l.type}">${escapeHtml(l.text)}</div>`).join(''); box.scrollTop = box.scrollHeight; }
+}
+
+async function extractPdfText(file) {
+  const buf = await file.arrayBuffer();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const maxPages = Math.min(pdf.numPages, 80);
+  let text = '';
+  for (let i = 1; i <= maxPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return text;
+}
+
+async function startAnalysis() {
+  goToUploadStep(3);
+  try {
+    logProgress('Lese PDF-Text...', '');
+    const pdfText = await extractPdfText(uploadState.file);
+    uploadState.pdfText = pdfText;
+    logProgress('PDF-Text extrahiert (' + pdfText.length + ' Zeichen).', 'ok');
+
+    logProgress('Erkenne Kapitelstruktur...', '');
+    const outline = await generateOutline(pdfText);
+    logProgress('Struktur erhalten: ' + outline.chapters.length + ' Kapitel.', 'ok');
+
+    const newModule = {
+      id: uid('uploaded'), title: outline.title || uploadState.file.name.replace(/\.pdf$/i,''),
+      subject: outline.subject || '', color: outline.color || MODULE_COLORS[modules.length % MODULE_COLORS.length],
+      startDate: todayIso(), targetDate: addDays(todayIso(), uploadState.daysTotal),
+      pdfText, chapters: [], log: []
+    };
+
+    let gi = 1;
+    for (const chOutline of outline.chapters) {
+      logProgress(`Extrahiere Kernpunkte für "${chOutline.title}"...`, '');
+      try {
+        const chapter = await generateChapterStructure(pdfText, chOutline, gi);
+        newModule.chapters.push(chapter);
+        gi += chapter.subnodes.length;
+        logProgress(`✓ "${chOutline.title}" fertig.`, 'ok');
+      } catch (e) {
+        console.error(e);
+        newModule.chapters.push(buildFailedChapter(chOutline, gi));
+        gi += (chOutline.subnodes || []).length;
+        logProgress(`⚠ "${chOutline.title}" fehlgeschlagen: ${e.message || e}`, 'err');
+      }
+    }
+
+    modules.push(newModule);
+    activeModuleId = newModule.id;
+    await saveState();
+    uploadState.newModule = newModule;
+    logProgress('Fertig!', 'ok');
+    setTimeout(() => goToUploadStep(4), 500);
+  } catch (e) {
+    console.error(e);
+    logProgress('Fehler bei der Analyse: ' + (e.message || e), 'err');
+    const box = document.getElementById('progress-log');
+    if (box) { const retryBtn = document.createElement('div'); retryBtn.innerHTML = `<button class="btn btn-sm" style="margin-top:8px;" onclick="startAnalysis()">Erneut versuchen</button>`; box.appendChild(retryBtn); }
+  }
+}
+
+function buildFailedChapter(chOutline, startGlobalIndex) {
+  let gi = startGlobalIndex;
+  return {
+    id: chOutline.id, title: chOutline.title, stat: chOutline.stat || 'int', color: chOutline.color || '#378ADD',
+    icon: chOutline.icon || null, _generationFailed: true,
+    subnodes: (chOutline.subnodes || []).map(sn => ({
+      id: sn.id, title: sn.title, icon: null, globalIndex: gi++, sourceExcerpt: null,
+      kernpunkte: [], questgeber: [], exercise: null
+    }))
+  };
+}
+
+async function generateOutline(pdfText) {
+  const prompt = `Du bist ein Lern-App-Assistent für ein DHfPG-Studium (Sport-/Gesundheitsmanagement).
+Analysiere den folgenden Studienbrief-Text und erstelle eine Kapitelstruktur (nur Struktur, keine Details).
+
+Regeln:
+- Sortiere Meta-/Verwaltungsinhalte aus (Vorwort, Literaturverzeichnis, Copyright, organisatorische Hinweise) — die tauchen NICHT als Kapitel auf.
+- Jedes Kapitel bekommt ein Fach-Stat aus: med, nat, ges, wei, int — wähle das passendste.
+- Jedes Kapitel bekommt ein passendes Emoji-Icon, das den KONKRETEN Inhalt zeigt (nicht nur das Fach).
+- Halte dich an die chronologische Reihenfolge des Studienbriefs.
+
+Antworte NUR als JSON (keine Backticks):
+{
+  "title": "...", "subject": "...", "color": "#378ADD",
+  "chapters": [{ "id": "1", "title": "...", "stat": "med", "color": "#1D9E75", "icon": "🦴",
+    "subnodes": [{ "id": "1.1", "title": "..." }] }]
+}
+
+Studienbrief-Text (ggf. gekürzt):
+${pdfText.slice(0, 60000)}`;
+  const raw = await callClaude(prompt, 4000);
+  const parsed = parseJsonLoose(raw);
+  if (!parsed.chapters || !parsed.chapters.length) throw new Error('Keine Kapitel erkannt.');
+  return parsed;
+}
+
+async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
+  const prompt = `Du bereitest ein Kapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen).
+
+Kapitel: "${chOutline.title}" (Stat: ${chOutline.stat})
+Unterkapitel: ${JSON.stringify((chOutline.subnodes||[]).map(s=>({id:s.id,title:s.title})))}
+
+Für JEDES Unterkapitel:
+1. Extrahiere ALLE atomaren, prüfbaren Kernpunkte (Begriffe, Konzepte, Mechanismen) — vollständig, nichts auslassen.
+2. Gruppiere die Kernpunkte in 1 bis mehrere THEMATISCHE CLUSTER (= spätere Questgeber). Jeder Cluster hat einen eigenen, klar unterscheidbaren Schwerpunkt und NICHT dieselben Kernpunkte wie ein anderer Cluster desselben Unterkapitels (keine Überschneidung der Cluster untereinander). Bei wenig Stoff reicht 1 Cluster, bei viel/heterogenem Stoff mehrere (ca. 3-6 Kernpunkte pro Cluster ist ein guter Richtwert).
+3. Gib jedem Cluster/Questgeber einen echten Vornamen (z.B. "Mia", "Kevin", "Frau Bergmann") — das ist der Name, den der Spieler sieht, nicht das Thema. Verschiedene Namen pro Unterkapitel, keine Wiederholung.
+4. Gib ein passendes Emoji-Icon für das Unterkapitel (zeigt den konkreten Inhalt, nicht nur das Fach).
+5. Liefere einen kurzen, relevanten Text-Auszug (excerpt, ca. 500-1500 Zeichen) aus dem Studienbrief-Text als Kontext für spätere Quest-Generierung.
+6. Falls das Unterkapitel eine Original-Übung/Wiederholungsfrage aus dem Studienbrief enthält, die sich als Kapitel-Abschluss-Herausforderung eignet, gib sie als "exercise" mit.
+
+Sonderregel: Verweist der Text auf externes Wissen (z.B. "Recherchieren Sie über X"), nimm X trotzdem explizit als Kernpunkt auf.
+Vorfilter: Meta-/Verwaltungsinhalt wird nicht extrahiert.
+
+KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine doppelten Anführungszeichen in Strings.
+{
+  "subnodes": [{
+    "id": "${chOutline.subnodes && chOutline.subnodes[0] ? chOutline.subnodes[0].id : '1.1'}",
+    "icon": "🧭",
+    "excerpt": "...",
+    "questgeber": [ { "name": "Mia", "label": "Kurzer interner Cluster-Name (nicht sichtbar für den Spieler)", "kernpunkte": ["Begriff 1","Begriff 2"] } ],
+    "exercise": null
+  }]
+}
+
+Relevanter Studienbrief-Ausschnitt:
+${pdfText.slice(0, 50000)}`;
+
+  const raw = await callClaude(prompt, 8000);
+  const parsed = parseJsonLoose(raw);
+  let gi = startGlobalIndex;
+  const subnodes = (chOutline.subnodes || []).map((snOutline, si) => {
+    const genSn = (parsed.subnodes || []).find(s => s.id === snOutline.id) || {};
+    return buildNormalizedSubnode({
+      title: snOutline.title, icon: genSn.icon, excerpt: genSn.excerpt,
+      questgeber: genSn.questgeber, exercise: genSn.exercise
+    }, chOutline.id, si, gi++);
+  });
+  return { id: chOutline.id, title: chOutline.title, stat: chOutline.stat, color: chOutline.color, icon: chOutline.icon || null, _generationFailed: false, subnodes };
+}
+
+async function retryChapter(chapterId) {
+  const m = getModule(activeModuleId);
+  const ch = m.chapters.find(c => c.id === chapterId);
+  if (!ch || !m.pdfText) { showAlertDialog('Kein PDF-Text für Retry gespeichert.'); return; }
+  const startGlobalIndex = ch.subnodes[0] ? ch.subnodes[0].globalIndex : 1;
+  const chOutline = { id: ch.id, title: ch.title, stat: ch.stat, color: ch.color, icon: ch.icon, subnodes: ch.subnodes.map(sn => ({ id: sn.id, title: sn.title })) };
+  try {
+    const newChapter = await generateChapterStructure(m.pdfText, chOutline, startGlobalIndex);
+    const idx = m.chapters.findIndex(c => c.id === chapterId);
+    m.chapters[idx] = newChapter;
+    await saveState();
+    renderSkilltree();
+  } catch (e) {
+    showAlertDialog('Retry fehlgeschlagen: ' + (e.message || e));
+  }
+}
+
+function renderUploadStep4() {
+  const m = uploadState.newModule;
+  if (!m) return `<div>Kein Modul erstellt.</div>`;
+  return `
+    <div style="text-align:center;padding:10px 0 4px;">
+      <div style="font-size:32px;">🎉</div>
+      <h3 style="margin:8px 0 4px;">${escapeHtml(m.title)} ist bereit!</h3>
+      <p style="color:var(--text-dim);font-size:13.5px;">${m.chapters.length} Kapitel, ${flatSubnodes(m).length} Unterkapitel. Ziel: ${formatDateShort(m.targetDate)}.</p>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;">
+      <button class="btn btn-primary" onclick="closeUploadFlow();openSkilltree('${m.id}')">Skilltree öffnen</button>
+    </div>
+  `;
+}
+
+/* =========================================================================
+   TEXT-IMPORT FLOW (JSON von Claude im Chat generiert)
+   Schema: { title, subject, color, chapters:[{ title, stat, icon,
+     subnodes:[{ title, icon, excerpt, questgeber:[{label, kernpunkte:[...]}], exercise? }] }] }
+========================================================================= */
+let importState = {
+  step: 1, mode: 'new', targetModuleId: null, jsonText: '', parseError: '', parsed: null,
+  daysTotal: 21, newModule: null, appendedCount: 0
+};
+
+function openImportFlow() {
+  importState = { step: 1, mode: 'new', targetModuleId: modules.length ? modules[0].id : null, jsonText: '', parseError: '', parsed: null, daysTotal: 21, newModule: null, appendedCount: 0 };
+  renderImportModal();
+}
+function closeImportFlow() { document.getElementById('modal-root').innerHTML = ''; }
+function setImportMode(mode) { importState.mode = mode; importState.parseError = ''; renderImportModal(); }
+
+function renderImportModal() {
+  const root = document.getElementById('modal-root');
+  const s = importState.step;
+  const showDots = importState.mode === 'new';
+  const dots = [1,2,3].map(i => `<div class="upload-step-dot ${i<s?'done':i===s?'active':''}"></div>`).join('');
+  let body = '';
+  if (s === 1) body = renderImportStep1();
+  else if (s === 2) body = renderImportStep2();
+  else if (s === 3) body = renderImportStep3();
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) closeImportFlow()">
+      <div class="modal" style="max-width:640px;">
+        <div class="modal-head">
+          <h2>Per Text importieren</h2>
+          <button class="btn btn-ghost btn-sm" onclick="closeImportFlow()">✕</button>
+        </div>
+        <div class="modal-body">
+          ${showDots ? `<div class="upload-steps">${dots}</div>` : ''}
+          ${body}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderImportStep1() {
+  const hasModules = modules.length > 0;
+  return `
+    ${hasModules ? `
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <button class="btn btn-sm ${importState.mode==='new'?'btn-primary':''}" onclick="setImportMode('new')">＋ Neuer Studienbrief</button>
+        <button class="btn btn-sm ${importState.mode==='append'?'btn-primary':''}" onclick="setImportMode('append')">📎 Kapitel ergänzen</button>
+      </div>
+    ` : ''}
+    ${importState.mode === 'append' ? `
+      <label style="font-size:12.5px;color:var(--text-dim);display:block;margin-bottom:6px;">Zu welchem Studienbrief hinzufügen?</label>
+      <select id="import-target-module" style="width:100%;background:var(--card-2);border:0.5px solid var(--border);border-radius:8px;color:var(--text);padding:9px;font-size:13px;margin-bottom:14px;">
+        ${modules.map(m => `<option value="${m.id}" ${importState.targetModuleId===m.id?'selected':''}>${escapeHtml(m.title)} (${m.chapters.length} Kapitel bisher)</option>`).join('')}
+      </select>
+    ` : ''}
+    <p style="color:var(--text-dim);font-size:13px;line-height:1.5;">
+      ${importState.mode === 'append'
+        ? 'Füge hier die JSON-Struktur für die nächsten Kapitel ein (nur "chapters", keine Quests nötig).'
+        : 'Schick mir (Claude) den Studienbrief als PDF hier im Chat. Ich extrahiere Struktur + Kernpunkte je Unterkapitel und gebe dir einen JSON-Block zurück. Den fügst du hier ein.'}
+    </p>
+    <textarea id="import-json-input" style="width:100%;min-height:200px;background:var(--card-2);border:0.5px solid var(--border);border-radius:8px;color:var(--text);padding:10px;font-size:11.5px;font-family:ui-monospace,monospace;line-height:1.5;" placeholder='{ "title": "...", "chapters": [ ... ] }'>${escapeHtml(importState.jsonText)}</textarea>
+    ${importState.parseError ? `<div style="color:var(--red);font-size:12.5px;margin-top:8px;">⚠ ${escapeHtml(importState.parseError)}</div>` : ''}
+    <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary" onclick="validateImportJson()">Weiter</button>
+    </div>
+  `;
+}
+
+async function validateImportJson() {
+  const ta = document.getElementById('import-json-input');
+  importState.jsonText = ta.value;
+  if (importState.mode === 'append') {
+    const sel = document.getElementById('import-target-module');
+    if (sel) importState.targetModuleId = sel.value;
+  }
+  try {
+    const raw = parseJsonLoose(ta.value);
+    if (!raw.chapters || !Array.isArray(raw.chapters) || raw.chapters.length === 0) throw new Error('Kein gültiges "chapters"-Array gefunden.');
+    importState.parseError = '';
+    if (importState.mode === 'append') {
+      const targetModule = getModule(importState.targetModuleId);
+      if (!targetModule) throw new Error('Kein Ziel-Studienbrief ausgewählt.');
+      const newChapters = appendChaptersToModule(targetModule, raw.chapters);
+      await saveState();
+      importState.newModule = targetModule;
+      importState.appendedCount = newChapters.length;
+      importState.step = 3;
+    } else {
+      importState.parsed = normalizeImportedModule(raw);
+      importState.step = 2;
+    }
+  } catch (e) {
+    importState.parseError = 'Konnte JSON nicht lesen: ' + (e.message || e);
+  }
+  renderImportModal();
+}
+
+function renderImportStep2() {
+  const end = addDays(todayIso(), importState.daysTotal);
+  return `
+    <p style="color:var(--text-dim);font-size:13.5px;">✓ ${importState.parsed.chapters.length} Kapitel erkannt. Bis wann willst du "${escapeHtml(importState.parsed.title)}" komplett durchgearbeitet haben?</p>
+    <div class="days-picker">
+      <button class="btn" onclick="importChangeDays(-1)">−</button>
+      <div class="days-num">${importState.daysTotal}</div>
+      <button class="btn" onclick="importChangeDays(1)">+</button>
+    </div>
+    <div class="days-endinfo">Start heute · Ziel ca. ${formatDateShort(end)}</div>
+    <div style="margin-top:18px;display:flex;justify-content:space-between;">
+      <button class="btn btn-ghost" onclick="importState.step=1;renderImportModal()">Zurück</button>
+      <button class="btn btn-primary" onclick="finalizeImport()">Studienbrief anlegen</button>
+    </div>
+  `;
+}
+function importChangeDays(delta) { importState.daysTotal = Math.max(1, Math.min(365, importState.daysTotal + delta)); renderImportModal(); }
+
+async function finalizeImport() {
+  const p = importState.parsed;
+  const newModule = {
+    id: uid('imported'), title: p.title, subject: p.subject, color: p.color,
+    startDate: todayIso(), targetDate: addDays(todayIso(), importState.daysTotal),
+    pdfText: p.pdfText, chapters: p.chapters, log: []
+  };
+  modules.push(newModule);
+  activeModuleId = newModule.id;
+  await saveState();
+  importState.newModule = newModule;
+  importState.step = 3;
+  renderImportModal();
+}
+
+function renderImportStep3() {
+  const m = importState.newModule;
+  if (!m) return `<div>Kein Modul erstellt.</div>`;
+  if (importState.mode === 'append') {
+    return `
+      <div style="text-align:center;padding:10px 0 4px;">
+        <div style="font-size:32px;">✅</div>
+        <h3 style="margin:8px 0 4px;">${importState.appendedCount} Kapitel zu "${escapeHtml(m.title)}" hinzugefügt!</h3>
+        <p style="color:var(--text-dim);font-size:13.5px;">Insgesamt jetzt ${m.chapters.length} Kapitel, ${flatSubnodes(m).length} Unterkapitel.</p>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;">
+        <button class="btn btn-primary" onclick="closeImportFlow();openSkilltree('${m.id}')">Skilltree öffnen</button>
+      </div>
+    `;
+  }
+  return `
+    <div style="text-align:center;padding:10px 0 4px;">
+      <div style="font-size:32px;">🎉</div>
+      <h3 style="margin:8px 0 4px;">${escapeHtml(m.title)} ist da!</h3>
+      <p style="color:var(--text-dim);font-size:13.5px;">${m.chapters.length} Kapitel importiert. Ziel: ${formatDateShort(m.targetDate)}.</p>
+      ${!m.pdfText ? `<p style="color:var(--text-faint);font-size:12px;">Hinweis: Ohne mitgelieferten Studienbrief-Text kann ein fehlgeschlagenes Kapitel nicht automatisch neu generiert werden (⚠-Retry im Skilltree).</p>` : ''}
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;">
+      <button class="btn btn-primary" onclick="closeImportFlow();openSkilltree('${m.id}')">Skilltree öffnen</button>
+    </div>
+  `;
+}
+
+/* =========================================================================
+   INIT
+========================================================================= */
+async function init() {
+  const saved = await loadState();
+  if (saved) {
+    modules = saved.modules || [];
+    activeModuleId = saved.activeModuleId || null;
+    gender = saved.gender != null ? saved.gender : null;
+    bodyXP = saved.bodyXP || { kraft: 0, ausdauer: 0, koordination: 0 };
+  }
+  renderCharacter();
+}
+init();
+</script>
+</body>
+</html>
