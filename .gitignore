@@ -144,3 +144,8 @@ vite.config.ts.timestamp-*
 
 # Local Netlify folder
 .netlify
+
+# Firebase CLI logs
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

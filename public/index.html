@@ -277,6 +277,13 @@ const MODULE_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#7F77DD', '#D67ABF'];
 
 const MODEL = 'claude-sonnet-4-6';
 
+// GitHub-Pages-Version: Frontend und Backend laufen auf unterschiedlichen Domains
+// (Pages liefert nur statische Dateien), daher braucht es hier die volle Backend-URL
+// statt der alten relativen Netlify-Pfade ('/api/claude', '/api/storage').
+// Nach dem Firebase-Deploy ausfüllen, z.B.:
+// 'https://europe-west1-DEIN-PROJEKT.cloudfunctions.net'
+const API_BASE = 'https://REGION-DEIN-FIREBASE-PROJEKT.cloudfunctions.net';
+
 /* =========================================================================
    STATE
    Modul-Datenstruktur (v4 — Questgeber-Modell):
@@ -309,11 +316,11 @@ let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
 /* =========================================================================
    STORAGE
 ========================================================================= */
-// Netlify-Version: eigener Blob-Storage-Endpunkt statt window.storage
+// Firebase-Version: eigene Cloud Function (Firestore-gestützt) statt window.storage
 async function saveState() {
   const payload = { modules, activeModuleId, gender, bodyXP };
   try {
-    await fetch('/api/storage', {
+    await fetch(API_BASE + '/storage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: 'mg_v4', value: JSON.stringify(payload) })
@@ -324,7 +331,7 @@ async function saveState() {
 }
 async function loadState() {
   try {
-    const resp = await fetch('/api/storage?key=mg_v4');
+    const resp = await fetch(API_BASE + '/storage?key=mg_v4');
     if (!resp.ok) return null;
     const data = await resp.json();
     if (data && data.value) return JSON.parse(data.value);
@@ -1179,7 +1186,7 @@ pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierun
 /* =========================================================================
    AI / CLAUDE API
 ========================================================================= */
-// Netlify-Version: Call läuft über die eigene Function (Key liegt serverseitig)
+// Firebase-Version: Call läuft über die eigene Cloud Function (Key liegt serverseitig)
 // cachedContext (optional): großer, über mehrere Calls hinweg UNVERÄNDERTER Textblock
 // (z.B. derselbe Studienbrief-Ausschnitt für alle Unterkapitel-Calls). Geht als
 // "system"-Block mit cache_control raus — Anthropic cached ihn serverseitig, alle
@@ -1190,16 +1197,15 @@ async function callClaude(prompt, maxTokens, cachedContext) {
   if (cachedContext) {
     body.system = [{ type: 'text', text: cachedContext, cache_control: { type: 'ephemeral' } }];
   }
-  const resp = await fetch('/api/claude', {
+  const resp = await fetch(API_BASE + '/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   if (!resp.ok) { const errText = await resp.text().catch(()=> ''); throw new Error('API-Fehler ' + resp.status + ': ' + errText); }
 
-  // Antwort kommt als SSE-Stream (siehe netlify/functions/claude.js) — Textteile
-  // laufend einsammeln statt auf die komplette Antwort zu warten. Das vermeidet den
-  // "Inactivity Timeout" von Netlify bei längeren Antworten (z.B. Kernpunkte-Extraktion).
+  // Antwort kommt als SSE-Stream (siehe functions/index.js) — Textteile laufend
+  // einsammeln statt auf die komplette Antwort zu warten.
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '', text = '', stopReason = null;
@@ -1616,10 +1622,9 @@ ${pdfText.slice(0, 60000)}`;
 }
 
 // Ein Claude-Call PRO UNTERKAPITEL statt einem großen Call für das ganze Kapitel:
-// Netlify killt Function-Requests nach ~30s auch beim Streamen (hartes Zeitlimit,
-// nicht nur "keine Daten"-Inaktivität) — bei vielen Unterkapiteln + max_tokens 8000
-// reißt ein einzelner Kapitel-Call das oft. Kleinere, einzelne Calls bleiben
-// zuverlässig darunter und ein Fehlschlag reißt nicht mehr das ganze Kapitel mit.
+// bei vielen Unterkapiteln + max_tokens 8000 wird ein einzelner Kapitel-Call schnell
+// sehr lang. Kleinere, einzelne Calls bleiben zuverlässiger und ein Fehlschlag reißt
+// nicht mehr das ganze Kapitel mit.
 async function generateSubnodeContent(pdfText, chOutline, snOutline) {
   // Dieser Kontext-Block ist für JEDEN Unterkapitel-Call identisch (immer derselbe
   // Ausschnitt des Studienbriefs) — als cachedContext an callClaude geben, statt ihn
