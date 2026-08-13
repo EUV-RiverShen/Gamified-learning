@@ -21,25 +21,20 @@ Eine gamifizierte Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement)
 - **Wichtig für Minecraft-Integration:** `window.storage` ist von einem Java-Plugin aus nicht erreichbar — dafür wird ein eigener kleiner Backend-Server nötig (siehe Abschnitt 4).
 - Native Browser-Dialoge (`confirm()`, `alert()`) funktionieren in der Claude.ai-Artefakt-Sandbox NICHT zuverlässig — die App hat deshalb eigene Overlay-Dialoge (`showConfirmDialog`, `showAlertDialog`) statt der nativen Funktionen. Bei einer eigenständigen Web-Version (außerhalb des Artefakts) wäre das kein Problem mehr, aber die eigenen Dialoge können trotzdem bleiben.
 
-### 2.1a Aktueller Deployment-Stand (Netlify) — bereits umgesetzt, im Repo enthalten
-Die App läuft mittlerweile NICHT mehr nur als Claude.ai-Artefakt, sondern zusätzlich eigenständig auf Netlify:
-- `public/index.html` — die App, Storage-Calls gehen an `/api/storage`, KI-Calls an `/api/claude` (die alten `NETLIFY-SWAP`-Kommentare sind an diesen zwei Stellen bereits eingelöst).
-- `netlify/functions/claude.js` — Proxy zur Anthropic API, hält den Key serverseitig (Environment Variable `ANTHROPIC_API_KEY`).
-- `netlify/functions/storage.js` — **aktuell noch auf Basis von Netlify Blobs** (Zero-Config-Key/Value-Store, funktioniert, ist aber nur ein einzelner JSON-Blob unter dem Key `mg_v4`, keine echte Datenbank).
-- `netlify.toml` + `package.json` — fertige Konfiguration (Functions v2, `config.path` statt manueller Redirects).
-- **Deploy-Hinweis:** Netlify Drop (reines Drag & Drop) funktioniert NICHT für dieses Projekt — es deployed keine Functions. Nötig ist entweder ein Git-verbundenes Repo (empfohlen, automatischer Deploy bei jedem Push) oder die Netlify CLI (`netlify deploy --prod`).
+### 2.1a Aktueller Deployment-Stand (GitHub Pages + Firebase) — bereits umgesetzt, im Repo enthalten
+Die App lief zwischenzeitlich eigenständig auf Netlify, ist inzwischen aber umgezogen: Frontend auf **GitHub Pages**, Backend auf **Firebase** (Cloud Functions + Firestore) — Details siehe `README.md`. Grund für den Umzug: die Netlify-Functions liefen ohnehin nur, weil ein Backend zwingend nötig war (API-Key verstecken, geteilter Speicher) — GitHub Pages allein kann das nicht, daher zwei Plattformen statt einer.
+- `public/index.html` — die App, Storage-Calls gehen an `API_BASE + '/storage'`, KI-Calls an `API_BASE + '/claude'` (`API_BASE` zeigt auf die Firebase-Cloud-Function-Basis-URL, da Frontend und Backend jetzt auf unterschiedlichen Domains laufen).
+- `functions/index.js` — Firebase Cloud Functions (2nd gen): `claude` (Proxy zur Anthropic API, Key als Firebase Secret) und `storage` (Key/Value-Speicher, siehe unten).
+- `.github/workflows/pages.yml` — deployt `public/` bei jedem Push auf `main` automatisch nach GitHub Pages.
+- `firebase.json`, `.firebaserc`, `firestore.rules` — Firebase-Konfiguration.
+- Die alten Netlify-Dateien (`netlify.toml`, `netlify/functions/*`) wurden entfernt.
 
-### 2.1b Geplante Ablösung: Netlify Blobs → Neon (Postgres) — NÄCHSTER SCHRITT, noch nicht umgesetzt
-Entscheidung (aus Gesprächen nach dem ersten Netlify-Deploy): **Netlify Blobs wird durch eine echte Datenbank ersetzt — Neon (serverless Postgres).**
+### 2.1b Ablösung Netlify Blobs → Firestore — umgesetzt (Neon-Plan verworfen)
+Ursprünglich war (aus Gesprächen nach dem ersten Netlify-Deploy) eine Ablösung von Netlify Blobs durch **Neon (serverless Postgres)** angedacht — u.a. weil Postgres + JDBC der ausgetretenste Pfad für Minecraft-Plugin-Entwicklung ist. Mit dem Umzug weg von Netlify wurde stattdessen **Firestore** (Teil von Firebase, sowieso schon fürs Backend im Einsatz) als Speicher gewählt — kein Grund, für den Speicher eine dritte Plattform (Neon) zusätzlich zu GitHub Pages + Firebase einzuführen.
 
-Begründung:
-- Es gibt jetzt zwei sehr unterschiedliche Clients, die auf denselben Datenbestand zugreifen müssen: die Netlify Function (Node.js) UND später das Minecraft-Plugin (Java). Ein simpler Key/Value-Blob passt dafür schlechter als eine echte, strukturierte DB.
-- **Postgres + JDBC ist der mit Abstand ausgetretenste Pfad für Minecraft-Plugin-Entwicklung** (HikariCP + JDBC-Treiber gegen MySQL/Postgres ist Standard in praktisch jedem datenbankgestützten Plugin) — deutlich weniger Neuland als z.B. Turso/libSQL oder Cloudflare D1.
-- Cloudflare D1 wurde bewusst verworfen: außerhalb von Cloudflare Workers (also von einer Netlify Function aus) nur über Cloudflares Account-REST-API erreichbar, unbequemer als eine normale DB-Verbindung. Da das Hosting auf Netlify bleiben soll, kein guter Fit.
-- Turso (libSQL/SQLite, HTTP-API) wäre ebenfalls eine valide Alternative gewesen (großzügiger Free Tier, sehr einfache HTTP-Anbindung auch aus Java ohne JDBC), wurde aber zugunsten von Neon zurückgestellt, weil Postgres für den Minecraft-Teil konventioneller ist.
-- Neon Free Tier (Stand der Recherche): 0.5GB Storage pro Projekt, 100 CU-Stunden/Monat, bis zu 100 Projekte, keine Kreditkarte nötig — für diesen Anwendungsfall (ein Nutzer, überschaubare Datenmenge) mehr als ausreichend.
+Für die Minecraft-Integration bedeutet das: statt Postgres/JDBC würde das Java-Plugin über die **Firestore Admin SDK für Java** oder per HTTP gegen die `storage`-Cloud-Function auf denselben Datenbestand zugreifen. Weniger konventionell als Postgres/JDBC in der Minecraft-Plugin-Welt, aber dafür keine zusätzliche Plattform/kein zusätzlicher Account nötig.
 
-**Offen/zu tun (siehe auch Abschnitt 5):** `netlify/functions/storage.js` muss von Netlify Blobs auf eine Postgres-Verbindung zu Neon umgestellt werden (z.B. über `@neondatabase/serverless` oder den normalen `pg`-Treiber). Der grobe JSON-Blob-Ansatz (ein Key `mg_v4`, ein großes JSON-Objekt) kann fürs Erste beibehalten werden (einfachste Migration — z.B. eine Tabelle `app_state(key text primary key, value jsonb)`), muss aber spätestens für die Minecraft-Integration wahrscheinlich in echte Tabellen (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufgebrochen werden, damit das Java-Plugin sinnvoll einzelne Datensätze abfragen kann statt immer den kompletten Blob zu laden/parsen.
+**Offen/zu tun (siehe auch Abschnitt 5):** Aktuell liegt der App-Zustand weiterhin als ein großer JSON-Blob unter einem Firestore-Dokument (`appState/mg_v4`) — die einfachste Migration vom alten Netlify-Blob-Modell. Für die Minecraft-Integration wird das wahrscheinlich in echte Firestore-Collections (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufgebrochen werden müssen, damit das Java-Plugin gezielt einzelne Datensätze abfragen kann statt immer den kompletten Blob zu laden/parsen.
 
  (Questgeber-Architektur, aktueller Stand — WICHTIG: das ist NICHT die ursprüngliche 1:1-"ein Unterkapitel = eine Quest"-Version, sondern ein kompletter Umbau)
 
@@ -138,7 +133,7 @@ Modul (= ein Studienbrief):
 
 ### 4.1 Architektur-Entscheidung
 - **Server-Plugin (Paper/Spigot, Java)** statt Client-Mod (Fabric/Forge) — pragmatischer, funktioniert auch für Singleplayer über einen lokalen Server, KI-Calls laufen serverseitig (Java kann problemlos HTTP).
-- **Backend: Netlify Functions + Neon (Postgres)** — bereits als Entscheidung getroffen (siehe 2.1b), noch nicht vollständig umgesetzt (Blobs→Neon-Migration steht aus). Sowohl die Web-App als auch das künftige MC-Plugin sprechen mit demselben Backend. Der Anthropic-API-Key liegt nur einmal serverseitig (`netlify/functions/claude.js`).
+- **Backend: Firebase (Cloud Functions + Firestore)** — bereits umgesetzt (siehe 2.1a/2.1b, ersetzt den ursprünglich angedachten Netlify+Neon-Ansatz). Sowohl die Web-App als auch das künftige MC-Plugin sprechen mit demselben Backend. Der Anthropic-API-Key liegt nur einmal serverseitig (`functions/index.js`, Firebase Secret).
 - **Aufgabenteilung:** Minecraft = Entdecken/Freischalten/Erklären. Web-App = tatsächliches Lösen der Quests (Skilltree-Nachbau ingame wurde bewusst verworfen — zu aufwändig, kein Mehrwert ggü. der Web-App).
 - NPCs technisch über das **Citizens**-Plugin (Standard-Library für sowas).
 
@@ -177,17 +172,16 @@ Weitere offene Gedanken:
 ---
 
 ## 5. Offene Punkte / nächste Schritte
-- [x] Web-App eigenständig auf Netlify lauffähig gemacht (`/api/claude`, `/api/storage` als Netlify Functions)
-- [ ] **Nächster konkreter Schritt:** `netlify/functions/storage.js` von Netlify Blobs auf Neon (Postgres) umstellen — Verbindung via `@neondatabase/serverless` oder `pg`, Umgebungsvariable `DATABASE_URL` statt Blobs-Store. Fürs Erste reicht eine simple `app_state(key text primary key, value jsonb)`-Tabelle als 1:1-Ersatz für den bisherigen Blob; echtes relationales Schema (Module/Kapitel/Unterkapitel/Questgeber/Fortschritt als eigene Tabellen) folgt spätestens für die Minecraft-Integration.
-- [ ] Neon-Projekt anlegen, `DATABASE_URL` als Netlify-Environment-Variable setzen
+- [x] Web-App eigenständig deploybar gemacht: Frontend auf GitHub Pages, Backend auf Firebase (`claude`, `storage` als Cloud Functions, Firestore statt Netlify Blobs) — siehe README.md
+- [ ] **Nächster konkreter Schritt:** `functions/index.js`/Firestore vom groben JSON-Blob (`appState/mg_v4`) auf echte Collections (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufbrechen, spätestens nötig für die Minecraft-Integration.
 - [ ] Paper-Plugin-Grundgerüst (Maven/Gradle, Citizens-Integration, NPC-Placement-Config)
-- [ ] Plugin verbindet sich per JDBC direkt mit derselben Neon-Postgres-Instanz (kein Umweg über die Netlify Functions nötig, da Postgres von überall erreichbar ist)
+- [ ] Plugin verbindet sich mit derselben Firestore-Instanz — entweder per Firestore Admin SDK für Java (Service-Account-Key) oder per HTTP gegen die `storage`-Cloud-Function
 - [ ] Prof-NPC-Chat-Logik (System-Prompt mit Guardrail "erklären ja, Quest lösen nein")
 - [ ] Zonen-Konzept konkretisieren (Koordinaten/Regionen, WorldGuard oder simple Bounding-Boxes)
 - [ ] Belohnungssystem final entscheiden (Soforteffekte vs. Meilensteine) und Item-Hüllen pro Fach-Stat definieren
 - [ ] Deep-Link-Format für Book&Quill-Links festlegen (welche IDs müssen in der URL, wie öffnet die Web-App direkt die richtige Quest)
 
 ## 6. Mitgelieferte Dateien (siehe Repo-Struktur)
-- `public/index.html` — die aktuelle, funktionierende Web-App. Stand: Questgeber-System mit On-Demand-Generierung, Entdecken-Tab, Themen-Checkliste, neuer Erzählform ohne Aufgabenliste, Reset-Funktion, eigene Dialog-Overlays, angebunden an `/api/claude` + `/api/storage`.
-- `netlify/functions/claude.js`, `netlify/functions/storage.js`, `netlify.toml`, `package.json` — Netlify-Deployment (siehe README.md für Setup).
+- `public/index.html` — die aktuelle, funktionierende Web-App. Stand: Questgeber-System mit On-Demand-Generierung, Entdecken-Tab, Themen-Checkliste, neuer Erzählform ohne Aufgabenliste, Reset-Funktion, eigene Dialog-Overlays, angebunden an `API_BASE + '/claude'` + `API_BASE + '/storage'`.
+- `functions/index.js`, `firebase.json`, `.firebaserc`, `firestore.rules`, `.github/workflows/pages.yml` — GitHub-Pages/Firebase-Deployment (siehe README.md für Setup).
 - `docs/quest_generierung_spec.md` — die Original-Spec für die Quest-Generierung (Muster A/B/C/D, Ablauf, Sonderregeln). Die Verfeinerung zur Erzählform (Abschnitt 3.3 hier) ergänzt diese Spec, ersetzt sie nicht.

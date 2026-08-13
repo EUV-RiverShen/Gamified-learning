@@ -1,6 +1,0 @@
-[build]
-  publish = "public"
-  functions = "netlify/functions"
-
-# Die Functions deklarieren ihren Pfad selbst über "config.path" (Functions v2),
-# daher sind hier keine zusätzlichen Redirects nötig.
