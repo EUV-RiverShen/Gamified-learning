@@ -275,7 +275,15 @@ const INTELLIGENCE_META = { label: 'Intelligenz', color: '#378ADD', icon: '🧠'
 const STAT_ICONS = { med: '⚕️', nat: '🌿', ges: '🏛️', wei: '🎭', int: '🧩' };
 const MODULE_COLORS = ['#378ADD', '#1D9E75', '#EF9F27', '#7F77DD', '#D67ABF'];
 
+// Standard-Modell für alles, wo Qualität zählt (Quest-Erzählung, NPC-Chat,
+// Bewertung freier Antworten): Zielkernpunkte müssen stimmig eingebaut, der
+// NPC-Ton glaubwürdig, offene Antworten fair beurteilt werden.
 const MODEL = 'claude-sonnet-4-6';
+// Günstigeres Modell für rein mechanische Struktur-Extraktion beim Studienbrief-
+// Upload (Kapitel erkennen, Kernpunkte aus Text ziehen, in Cluster gruppieren) —
+// kein kreatives Schreiben, kein Bewerten, daher reicht hier ein günstigeres
+// Modell (~3x billiger in beide Richtungen als MODEL).
+const MODEL_STRUCTURE = 'claude-haiku-4-5';
 
 // GitHub-Pages-Version: Frontend und Backend laufen auf unterschiedlichen Domains
 // (Pages liefert nur statische Dateien), daher braucht es hier die volle Backend-URL
@@ -1223,8 +1231,8 @@ pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierun
 // "system"-Block mit cache_control raus — Anthropic cached ihn serverseitig, alle
 // folgenden Calls mit demselben Block lesen ihn günstig+schnell aus dem Cache statt
 // ihn jedes Mal neu zu verarbeiten (spart Tokens/Kosten UND senkt die Latenz).
-async function callClaude(prompt, maxTokens, cachedContext) {
-  const body = { model: MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] };
+async function callClaude(prompt, maxTokens, cachedContext, model) {
+  const body = { model: model || MODEL, max_tokens: maxTokens || 8000, messages: [{ role: 'user', content: prompt }] };
   if (cachedContext) {
     body.system = [{ type: 'text', text: cachedContext, cache_control: { type: 'ephemeral' } }];
   }
@@ -1649,7 +1657,7 @@ Antworte NUR als JSON (keine Backticks):
 
 Studienbrief-Text (ggf. gekürzt):
 ${pdfText.slice(0, 400000)}`;
-  const raw = await callClaude(prompt, 4000);
+  const raw = await callClaude(prompt, 4000, null, MODEL_STRUCTURE);
   const parsed = parseJsonLoose(raw);
   if (!parsed.chapters || !parsed.chapters.length) throw new Error('Keine Kapitel erkannt.');
   return parsed;
@@ -1717,7 +1725,7 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   "exercise": null
 }`;
 
-  const raw = await callClaude(prompt, 3000, context);
+  const raw = await callClaude(prompt, 3000, context, MODEL_STRUCTURE);
   return parseJsonLoose(raw);
 }
 
