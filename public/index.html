@@ -280,9 +280,8 @@ const MODEL = 'claude-sonnet-4-6';
 // GitHub-Pages-Version: Frontend und Backend laufen auf unterschiedlichen Domains
 // (Pages liefert nur statische Dateien), daher braucht es hier die volle Backend-URL
 // statt der alten relativen Netlify-Pfade ('/api/claude', '/api/storage').
-// Nach dem Firebase-Deploy ausfüllen, z.B.:
-// 'https://europe-west1-DEIN-PROJEKT.cloudfunctions.net'
-const API_BASE = 'https://REGION-DEIN-FIREBASE-PROJEKT.cloudfunctions.net';
+// Backend ist ein Cloudflare Worker (siehe workers/), keine Firebase Cloud Function.
+const API_BASE = 'https://gamified-learning-api.amonbremer.workers.dev';
 
 /* =========================================================================
    STATE
@@ -316,7 +315,7 @@ let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
 /* =========================================================================
    STORAGE
 ========================================================================= */
-// Firebase-Version: eigene Cloud Function (Firestore-gestützt) statt window.storage
+// Cloudflare-Version: eigener Worker (KV-gestützt) statt window.storage
 async function saveState() {
   const payload = { modules, activeModuleId, gender, bodyXP };
   try {
@@ -1186,7 +1185,7 @@ pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierun
 /* =========================================================================
    AI / CLAUDE API
 ========================================================================= */
-// Firebase-Version: Call läuft über die eigene Cloud Function (Key liegt serverseitig)
+// Cloudflare-Version: Call läuft über den eigenen Worker (Key liegt serverseitig)
 // cachedContext (optional): großer, über mehrere Calls hinweg UNVERÄNDERTER Textblock
 // (z.B. derselbe Studienbrief-Ausschnitt für alle Unterkapitel-Calls). Geht als
 // "system"-Block mit cache_control raus — Anthropic cached ihn serverseitig, alle

@@ -7,61 +7,65 @@ danach eigenständig auf Netlify. Diese Version trennt Frontend und Backend:
   auf **GitHub Pages** deployt. Storage- und KI-Calls gehen an eine feste Backend-URL
   (`API_BASE`-Konstante oben im `<script>`), nicht mehr an relative `/api/...`-Pfade —
   GitHub Pages liefert nur statische Dateien, kein eigenes Backend.
-- **`functions/index.js`** — Firebase Cloud Functions, ersetzen die alten Netlify
-  Functions:
-  - `claude` — Proxy zur Anthropic API, hält den API-Key serverseitig (Firebase
+- **`workers/src/index.js`** — ein einzelner Cloudflare Worker, ersetzt die alten
+  Netlify Functions bzw. das kurzzeitige Firebase-Backend:
+  - `POST /claude` — Proxy zur Anthropic API, hält den API-Key serverseitig (Worker
     Secret), der Browser bekommt ihn nie zu Gesicht.
-  - `storage` — einfacher Key/Value-Speicher auf Basis von **Firestore** (ersetzt
-    Netlify Blobs).
+  - `GET/POST /storage` — einfacher Key/Value-Speicher auf Basis von **Cloudflare
+    KV** (ersetzt zunächst Netlify Blobs, dann kurzzeitig Firestore).
 
-## Warum zwei Plattformen (GitHub Pages + Firebase)?
+## Warum zwei Plattformen (GitHub Pages + Cloudflare)?
 
 GitHub Pages hostet ausschließlich statische Dateien — keine Server-Functions, keine
 Environment Variables/Secrets. Die App braucht aber beides (API-Key serverseitig
 verstecken, geteilten Speicher). Deshalb: **Frontend auf GitHub Pages, Backend auf
-Firebase** (Cloud Functions + Firestore).
+Cloudflare** (Workers + KV).
 
-> **Hinweis Kosten:** Cloud Functions mit ausgehenden Requests an fremde APIs (hier:
-> `api.anthropic.com`) brauchen den **Blaze-Plan** (Pay-as-you-go) — der kostenlose
-> Spark-Plan erlaubt das nicht. Blaze hat aber ein großzügiges kostenloses Kontingent
-> (u.a. 2 Mio. Function-Aufrufe/Monat); für eine einzelne Person fällt in der Regel
-> nichts an. Eine Kreditkarte muss trotzdem hinterlegt werden.
+> **Hinweis Kosten/Sicherheit:** Backend lief zwischenzeitlich auf **Firebase**
+> (Cloud Functions + Firestore), wurde aber wieder verworfen: Cloud Functions mit
+> ausgehenden Requests an fremde APIs (hier `api.anthropic.com`) brauchen zwingend
+> den **Blaze-Plan** — postpaid, kein hartes Limit, Kreditkarte muss hinterlegt
+> werden, auch wenn am Ende nichts abgerechnet wird. Cloudflare Workers laufen im
+> **kostenlosen Tarif ganz ohne hinterlegte Zahlungsmethode** und setzen ihr
+> Freikontingent (100.000 Requests/Tag) hart durch — Anfragen darüber hinaus werden
+> abgelehnt statt abgerechnet. Für eine einzelne Person bleibt es damit strukturell
+> unmöglich, unabsichtlich eine Rechnung zu bekommen.
 
 ## Setup
 
-### 1. Firebase-Backend
+### 1. Cloudflare-Backend
 
-Voraussetzung: [Firebase CLI](https://firebase.google.com/docs/cli) installiert
-(`npm install -g firebase-tools`) und ein Firebase-Projekt (Blaze-Plan) angelegt.
+Voraussetzung: [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
+installiert (`npm install -g wrangler`) und ein Cloudflare-Account (kostenlos, keine
+Zahlungsmethode nötig).
 
 ```bash
-firebase login
+cd workers
+wrangler login
 
-# Projekt-ID in .firebaserc eintragen (Platzhalter "DEIN-FIREBASE-PROJEKT-ID" ersetzen)
-
-# Firestore einmalig im Projekt aktivieren (Firebase Console oder):
-firebase firestore:databases:create --location=eur3   # Region nach Bedarf wählen
+# Einmalig einen KV-Namespace anlegen und die ausgegebene id in wrangler.toml
+# eintragen (Platzhalter/Beispiel-id dort ersetzen):
+wrangler kv namespace create APP_STATE
 
 # Anthropic-Key als Secret hinterlegen (Prompt fragt nach dem Wert):
-firebase functions:secrets:set ANTHROPIC_API_KEY
+wrangler secret put ANTHROPIC_API_KEY
 
-# Functions + Firestore-Regeln deployen:
-firebase deploy --only functions,firestore:rules
+# Worker deployen:
+wrangler deploy
 ```
 
-Nach dem Deploy gibt die CLI die Function-URLs aus, z.B.:
+Nach dem Deploy gibt die CLI die Worker-URL aus, z.B.:
 ```
-https://europe-west1-dein-projekt.cloudfunctions.net/claude
-https://europe-west1-dein-projekt.cloudfunctions.net/storage
+https://gamified-learning-api.<dein-cloudflare-name>.workers.dev
 ```
 
-Den gemeinsamen Basisteil (ohne `/claude` bzw. `/storage`) in `public/index.html` bei
-der `API_BASE`-Konstante eintragen.
+Diese URL (ohne `/claude` bzw. `/storage`) in `public/index.html` bei der
+`API_BASE`-Konstante eintragen.
 
-**CORS:** `functions/index.js` erlaubt standardmäßig nur
+**CORS:** `workers/src/index.js` erlaubt standardmäßig nur
 `https://euv-rivershen.github.io` (+ `localhost:5000` für lokales Testen). Falls die
 GitHub-Pages-URL abweicht (eigene Domain, anderer Org-/User-Name), `ALLOWED_ORIGINS`
-in `functions/index.js` entsprechend anpassen und neu deployen.
+in `workers/src/index.js` entsprechend anpassen und neu deployen.
 
 ### 2. GitHub Pages (Frontend)
 
@@ -74,30 +78,33 @@ Die Seite ist danach erreichbar unter `https://<org>.github.io/<repo>/`.
 
 ## Lokal testen
 
-Backend: `firebase emulators:start` (simuliert Functions + Firestore lokal — dafür
-`API_BASE` temporär auf die Emulator-URL zeigen lassen).
+Backend: `wrangler dev` im `workers/`-Ordner (simuliert den Worker lokal — dafür
+`API_BASE` temporär auf die dabei ausgegebene `localhost`-URL zeigen lassen).
 Frontend: `public/index.html` braucht keinen Build-Schritt, jeder simple statische
 Webserver reicht (z.B. `python3 -m http.server` im `public/`-Ordner).
 
 ## Wichtiger Hinweis: keine Nutzer-Trennung
 
-`storage`-Function speichert alles unter einem festen Key (`mg_v4`) — **jeder
+Die `/storage`-Route speichert alles unter einem festen Key (`mg_v4`) — **jeder
 Aufrufer sieht/bearbeitet denselben Datensatz**, es gibt kein Login. Für rein
 persönliche Nutzung (du bist der einzige Nutzer) ist das unproblematisch. Die
-CORS-Einschränkung auf die eigene GitHub-Pages-Domain (siehe oben) verhindert
-zumindest, dass fremde Websites den Endpunkt (und damit indirekt den Anthropic-Key)
-missbrauchen.
+CORS-Einschränkung auf die eigene GitHub-Pages-Domain (siehe oben) schützt
+Browser-Aufrufe, verhindert aber keine direkten Skript-/curl-Zugriffe auf die
+Worker-URL — wer die URL kennt, kann `/claude` direkt ansprechen und damit
+Anthropic-API-Kosten auf dem hinterlegten Key verursachen. Für reinen
+Eigengebrauch ist das Risiko gering, aber bei Bedarf ließe sich das mit einem
+selbst gewählten Shared Secret (Header-Check im Worker) weiter absichern.
 
-## Geplanter nächster Schritt: strukturierte Firestore-Collections
+## Geplanter nächster Schritt: strukturierte KV-Keys/D1
 
 Aktuell liegt der komplette App-Zustand als ein großer JSON-Blob unter einem
-Firestore-Dokument (`appState/mg_v4`) — die einfachste Migration vom alten
-Blob-Modell. Für die im Konzept (`docs/KONZEPT_UEBERGABE.md`) angedachte
-Minecraft-Integration (Java-Plugin braucht gezielten Zugriff auf einzelne
-Datensätze statt immer den kompletten Blob zu laden) ist mittelfristig ein Aufbrechen
-in echte Collections (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt)
-sinnvoll — dafür eignet sich Firestore direkt (keine zusätzliche DB-Migration nötig,
-anders als beim ursprünglich angedachten Umstieg auf Neon/Postgres).
+KV-Key (`mg_v4`) — die einfachste Migration vom alten Blob-Modell. Für die im
+Konzept (`docs/KONZEPT_UEBERGABE.md`) angedachte Minecraft-Integration (Java-Plugin
+braucht gezielten Zugriff auf einzelne Datensätze statt immer den kompletten Blob zu
+laden) ist mittelfristig ein Aufbrechen in echte Datensätze (Module, Kapitel,
+Unterkapitel, Questgeber, Fortschritt) sinnvoll — dafür kommt entweder weiterhin KV
+mit mehreren Keys infrage, oder bei Bedarf für relationale Abfragen **Cloudflare D1**
+(SQLite-basiert, ebenfalls im kostenlosen Tarif ohne Zahlungsmethode nutzbar).
 
 ## PDF.js
 
