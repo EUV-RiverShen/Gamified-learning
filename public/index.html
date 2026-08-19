@@ -316,8 +316,39 @@ let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
    STORAGE
 ========================================================================= */
 // Cloudflare-Version: eigener Worker (KV-gestützt) statt window.storage
+//
+// Schema-Versionierung: schemaVersion steht mit im gespeicherten Zustand.
+// Wenn eine künftige Änderung die STRUKTUR der Daten betrifft (neues
+// Pflichtfeld, umbenanntes Feld, verschobene Verschachtelung o.ä.), einen
+// neuen Eintrag in MIGRATIONS hinzufügen (Schlüssel = die Version, AUF die
+// er hochzieht) und SCHEMA_VERSION erhöhen. loadState() wendet beim nächsten
+// Start automatisch alle noch fehlenden Migrationen der Reihe nach an und
+// speichert direkt danach den aufgefrischten Zustand — bestehender
+// Fortschritt (Module, Log, Kernpunkte-Haken etc.) bleibt dabei erhalten.
+// Reine Werte-Anpassungen (z.B. "diese Quest-Art soll weniger XP geben")
+// brauchen dagegen KEINE Migration — dafür reicht ein gezielter, einmaliger
+// Patch direkt im gespeicherten JSON (log-Einträge haben ihren eigenen,
+// eingefrorenen xp-Wert, siehe Kommentar beim modules-Datenmodell oben).
+const SCHEMA_VERSION = 1;
+const MIGRATIONS = {
+  // Beispiel für später:
+  // 2: (state) => { state.modules.forEach(m => { m.someNewField ??= 'default'; }); return state; }
+};
+
+function runMigrations(state) {
+  const startVersion = state.schemaVersion || 1;
+  let version = startVersion;
+  while (version < SCHEMA_VERSION) {
+    version++;
+    const migrate = MIGRATIONS[version];
+    if (migrate) state = migrate(state);
+  }
+  state.schemaVersion = SCHEMA_VERSION;
+  return { state, migrated: startVersion !== SCHEMA_VERSION };
+}
+
 async function saveState() {
-  const payload = { modules, activeModuleId, gender, bodyXP };
+  const payload = { schemaVersion: SCHEMA_VERSION, modules, activeModuleId, gender, bodyXP };
   try {
     await fetch(API_BASE + '/storage', {
       method: 'POST',
@@ -333,7 +364,8 @@ async function loadState() {
     const resp = await fetch(API_BASE + '/storage?key=mg_v4');
     if (!resp.ok) return null;
     const data = await resp.json();
-    if (data && data.value) return JSON.parse(data.value);
+    if (!data || !data.value) return null;
+    return runMigrations(JSON.parse(data.value));
   } catch (e) { /* kein gespeicherter Zustand */ }
   return null;
 }
@@ -1877,12 +1909,16 @@ function renderImportStep3() {
    INIT
 ========================================================================= */
 async function init() {
-  const saved = await loadState();
-  if (saved) {
+  const loaded = await loadState();
+  if (loaded) {
+    const saved = loaded.state;
     modules = saved.modules || [];
     activeModuleId = saved.activeModuleId || null;
     gender = saved.gender != null ? saved.gender : null;
     bodyXP = saved.bodyXP || { kraft: 0, ausdauer: 0, koordination: 0 };
+    // Migrierten Zustand sofort wegschreiben, statt auf die nächste normale
+    // Aktion zu warten — sonst würde bei jedem Start erneut migriert.
+    if (loaded.migrated) await saveState();
   }
   renderCharacter();
 }
