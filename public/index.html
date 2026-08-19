@@ -1645,7 +1645,7 @@ Antworte NUR als JSON (keine Backticks):
 }
 
 Studienbrief-Text (ggf. gekürzt):
-${pdfText.slice(0, 60000)}`;
+${pdfText.slice(0, 400000)}`;
   const raw = await callClaude(prompt, 4000);
   const parsed = parseJsonLoose(raw);
   if (!parsed.chapters || !parsed.chapters.length) throw new Error('Keine Kapitel erkannt.');
@@ -1661,7 +1661,7 @@ async function generateSubnodeContent(pdfText, chOutline, snOutline) {
   // Ausschnitt des Studienbriefs) — als cachedContext an callClaude geben, statt ihn
   // in jedem Prompt neu mitzuschicken. Anthropic cached ihn nach dem ersten Call,
   // alle weiteren Unterkapitel-Calls lesen ihn günstig+schnell aus dem Cache.
-  const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${pdfText.slice(0, 50000)}`;
+  const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${pdfText.slice(0, 400000)}`;
 
   const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen), auf Basis des oben als Kontext bereitgestellten Studienbrief-Ausschnitts.
 
@@ -1690,26 +1690,46 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   return parseJsonLoose(raw);
 }
 
+// Ein einzelner Unterkapitel-Call zuerst (allein, abgewartet), damit der gecachte
+// Studienbrief-Kontext garantiert einmal geschrieben ist, BEVOR die restlichen
+// Unterkapitel dieses Kapitels parallel loslaufen — sonst könnten mehrere
+// gleichzeitig gestartete Calls den Cache-Schreib-Preis (1,25x) mehrfach zahlen,
+// statt ihn günstig auszulesen (0,1x). Die restlichen laufen dann per
+// Promise.allSettled gleichzeitig statt nacheinander — deutlich schneller,
+// hält den Cache innerhalb der 5-Minuten-TTL warm, und ein einzelner
+// Fehlschlag reißt weiterhin nicht die anderen Unterkapitel mit.
 async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
-  let gi = startGlobalIndex;
+  const outlines = chOutline.subnodes || [];
+  const results = new Array(outlines.length);
   let anyFailed = false;
-  const subnodes = [];
-  for (let si = 0; si < (chOutline.subnodes || []).length; si++) {
-    const snOutline = chOutline.subnodes[si];
-    let genSn = {};
+
+  async function runOne(si) {
+    const snOutline = outlines[si];
     try {
       logProgress(`  · "${snOutline.title}"...`, '');
-      genSn = await generateSubnodeContent(pdfText, chOutline, snOutline);
+      const genSn = await generateSubnodeContent(pdfText, chOutline, snOutline);
+      logProgress(`  ✓ "${snOutline.title}" fertig.`, 'ok');
+      return genSn;
     } catch (e) {
       console.error(e);
       anyFailed = true;
       logProgress(`  ⚠ "${snOutline.title}" fehlgeschlagen: ${e.message || e}`, 'err');
+      return {};
     }
-    subnodes.push(buildNormalizedSubnode({
-      title: snOutline.title, icon: genSn.icon, excerpt: genSn.excerpt,
-      questgeber: genSn.questgeber, exercise: genSn.exercise
-    }, chOutline.id, si, gi++));
   }
+
+  if (outlines.length > 0) {
+    results[0] = await runOne(0);
+    const rest = await Promise.allSettled(outlines.slice(1).map((_, i) => runOne(i + 1)));
+    rest.forEach((r, i) => { results[i + 1] = r.status === 'fulfilled' ? r.value : {}; });
+  }
+
+  let gi = startGlobalIndex;
+  const subnodes = outlines.map((snOutline, si) => buildNormalizedSubnode({
+    title: snOutline.title, icon: results[si].icon, excerpt: results[si].excerpt,
+    questgeber: results[si].questgeber, exercise: results[si].exercise
+  }, chOutline.id, si, gi++));
+
   return { id: chOutline.id, title: chOutline.title, stat: chOutline.stat, color: chOutline.color, icon: chOutline.icon || null, _generationFailed: anyFailed, subnodes };
 }
 
