@@ -1577,6 +1577,7 @@ async function startAnalysis() {
     logProgress('Erkenne Kapitelstruktur...', '');
     const outline = await generateOutline(pdfText);
     logProgress('Struktur erhalten: ' + outline.chapters.length + ' Kapitel.', 'ok');
+    const chapterExcerpts = resolveChapterExcerpts(pdfText, outline.chapters);
 
     const newModule = {
       id: uid('uploaded'), title: outline.title || uploadState.file.name.replace(/\.pdf$/i,''),
@@ -1586,10 +1587,11 @@ async function startAnalysis() {
     };
 
     let gi = 1;
-    for (const chOutline of outline.chapters) {
+    for (let ci = 0; ci < outline.chapters.length; ci++) {
+      const chOutline = outline.chapters[ci];
       logProgress(`Extrahiere Kernpunkte für "${chOutline.title}"...`, '');
       try {
-        const chapter = await generateChapterStructure(pdfText, chOutline, gi);
+        const chapter = await generateChapterStructure(chapterExcerpts[ci], chOutline, gi);
         newModule.chapters.push(chapter);
         gi += chapter.subnodes.length;
         logProgress(`✓ "${chOutline.title}" fertig.`, 'ok');
@@ -1636,11 +1638,12 @@ Regeln:
 - Jedes Kapitel bekommt ein Fach-Stat aus: med, nat, ges, wei, int — wähle das passendste.
 - Jedes Kapitel bekommt ein passendes Emoji-Icon, das den KONKRETEN Inhalt zeigt (nicht nur das Fach).
 - Halte dich an die chronologische Reihenfolge des Studienbriefs.
+- Jedes Kapitel bekommt zusätzlich "anchor": die ERSTEN 8-12 Wörter des Kapitelanfangs, WORTWÖRTLICH und EXAKT wie im Studienbrief-Text unten (gleiche Schreibweise, keine Korrekturen) — wird benutzt, um die Textstelle programmatisch wiederzufinden.
 
 Antworte NUR als JSON (keine Backticks):
 {
   "title": "...", "subject": "...", "color": "#378ADD",
-  "chapters": [{ "id": "1", "title": "...", "stat": "med", "color": "#1D9E75", "icon": "🦴",
+  "chapters": [{ "id": "1", "title": "...", "stat": "med", "color": "#1D9E75", "icon": "🦴", "anchor": "Exaktes Zitat der ersten Worte dieses Kapitels",
     "subnodes": [{ "id": "1.1", "title": "..." }] }]
 }
 
@@ -1652,16 +1655,44 @@ ${pdfText.slice(0, 400000)}`;
   return parsed;
 }
 
+// Schneidet pro Kapitel nur den TATSÄCHLICH ZUGEHÖRIGEN Textausschnitt aus dem
+// Studienbrief heraus, statt bei jedem Unterkapitel-Call das komplette Dokument
+// mitzuschicken — spart bei einem Studienbrief mit vielen Kapiteln den Großteil
+// der (wenn auch gecacht günstig gelesenen) Kontext-Tokens pro Call, UND liefert
+// gleichzeitig fokussierteren Kontext (nur der relevante Teil, nicht das ganze
+// Dokument). Nutzt den von generateOutline() gelieferten "anchor" (exaktes Zitat
+// des Kapitelanfangs), um die Position im Text zu finden. Falls ein Anker nicht
+// exakt gefunden wird (z.B. weil das Modell ihn leicht abgewandelt hat), fällt
+// dieses eine Kapitel sicher auf den kompletten Text zurück — nie ein harter
+// Fehler, nur ein verpasster Spar-Effekt für dieses eine Kapitel.
+function resolveChapterExcerpts(pdfText, chapters) {
+  const starts = chapters.map(ch => (ch.anchor ? pdfText.indexOf(ch.anchor.trim()) : -1));
+  return chapters.map((ch, i) => {
+    const start = starts[i];
+    if (start === -1) return pdfText;
+    let end = pdfText.length;
+    for (let j = i + 1; j < chapters.length; j++) {
+      if (starts[j] !== -1) { end = starts[j]; break; }
+    }
+    return pdfText.slice(Math.max(0, start - 200), end);
+  });
+}
+
 // Ein Claude-Call PRO UNTERKAPITEL statt einem großen Call für das ganze Kapitel:
 // bei vielen Unterkapiteln + max_tokens 8000 wird ein einzelner Kapitel-Call schnell
 // sehr lang. Kleinere, einzelne Calls bleiben zuverlässiger und ein Fehlschlag reißt
 // nicht mehr das ganze Kapitel mit.
-async function generateSubnodeContent(pdfText, chOutline, snOutline) {
-  // Dieser Kontext-Block ist für JEDEN Unterkapitel-Call identisch (immer derselbe
-  // Ausschnitt des Studienbriefs) — als cachedContext an callClaude geben, statt ihn
-  // in jedem Prompt neu mitzuschicken. Anthropic cached ihn nach dem ersten Call,
-  // alle weiteren Unterkapitel-Calls lesen ihn günstig+schnell aus dem Cache.
-  const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${pdfText.slice(0, 400000)}`;
+async function generateSubnodeContent(chapterText, chOutline, snOutline) {
+  // chapterText ist bereits der (per resolveChapterExcerpts) auf dieses Kapitel
+  // zugeschnittene Ausschnitt, nicht mehr der komplette Studienbrief. Dieser
+  // Kontext-Block ist für JEDEN Unterkapitel-Call INNERHALB DESSELBEN Kapitels
+  // identisch — als cachedContext an callClaude geben, statt ihn in jedem Prompt
+  // neu mitzuschicken. Anthropic cached ihn nach dem ersten Call, alle weiteren
+  // Unterkapitel-Calls dieses Kapitels lesen ihn günstig+schnell aus dem Cache.
+  // Sicherheitsgrenze falls resolveChapterExcerpts auf den kompletten Text
+  // zurückgefallen ist (Anker nicht gefunden): weiterhin gedeckelt, damit ein
+  // einzelnes Kapitel nicht unbegrenzt viel kostet.
+  const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${chapterText.slice(0, 400000)}`;
 
   const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen), auf Basis des oben als Kontext bereitgestellten Studienbrief-Ausschnitts.
 
@@ -1698,7 +1729,7 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
 // Promise.allSettled gleichzeitig statt nacheinander — deutlich schneller,
 // hält den Cache innerhalb der 5-Minuten-TTL warm, und ein einzelner
 // Fehlschlag reißt weiterhin nicht die anderen Unterkapitel mit.
-async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
+async function generateChapterStructure(chapterText, chOutline, startGlobalIndex) {
   const outlines = chOutline.subnodes || [];
   const results = new Array(outlines.length);
   let anyFailed = false;
@@ -1707,7 +1738,7 @@ async function generateChapterStructure(pdfText, chOutline, startGlobalIndex) {
     const snOutline = outlines[si];
     try {
       logProgress(`  · "${snOutline.title}"...`, '');
-      const genSn = await generateSubnodeContent(pdfText, chOutline, snOutline);
+      const genSn = await generateSubnodeContent(chapterText, chOutline, snOutline);
       logProgress(`  ✓ "${snOutline.title}" fertig.`, 'ok');
       return genSn;
     } catch (e) {
