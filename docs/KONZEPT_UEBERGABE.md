@@ -21,20 +21,20 @@ Eine gamifizierte Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement)
 - **Wichtig für Minecraft-Integration:** `window.storage` ist von einem Java-Plugin aus nicht erreichbar — dafür wird ein eigener kleiner Backend-Server nötig (siehe Abschnitt 4).
 - Native Browser-Dialoge (`confirm()`, `alert()`) funktionieren in der Claude.ai-Artefakt-Sandbox NICHT zuverlässig — die App hat deshalb eigene Overlay-Dialoge (`showConfirmDialog`, `showAlertDialog`) statt der nativen Funktionen. Bei einer eigenständigen Web-Version (außerhalb des Artefakts) wäre das kein Problem mehr, aber die eigenen Dialoge können trotzdem bleiben.
 
-### 2.1a Aktueller Deployment-Stand (GitHub Pages + Firebase) — bereits umgesetzt, im Repo enthalten
-Die App lief zwischenzeitlich eigenständig auf Netlify, ist inzwischen aber umgezogen: Frontend auf **GitHub Pages**, Backend auf **Firebase** (Cloud Functions + Firestore) — Details siehe `README.md`. Grund für den Umzug: die Netlify-Functions liefen ohnehin nur, weil ein Backend zwingend nötig war (API-Key verstecken, geteilter Speicher) — GitHub Pages allein kann das nicht, daher zwei Plattformen statt einer.
-- `public/index.html` — die App, Storage-Calls gehen an `API_BASE + '/storage'`, KI-Calls an `API_BASE + '/claude'` (`API_BASE` zeigt auf die Firebase-Cloud-Function-Basis-URL, da Frontend und Backend jetzt auf unterschiedlichen Domains laufen).
-- `functions/index.js` — Firebase Cloud Functions (2nd gen): `claude` (Proxy zur Anthropic API, Key als Firebase Secret) und `storage` (Key/Value-Speicher, siehe unten).
+### 2.1a Aktueller Deployment-Stand (GitHub Pages + Cloudflare) — bereits umgesetzt, im Repo enthalten
+Die App lief zwischenzeitlich eigenständig auf Netlify, dann kurz auf Firebase, ist inzwischen aber umgezogen: Frontend auf **GitHub Pages**, Backend auf **Cloudflare** (Workers + KV) — Details siehe `README.md`. Grund für den Umzug: ein Backend war ohnehin zwingend nötig (API-Key verstecken, geteilter Speicher) — GitHub Pages allein kann das nicht, daher zwei Plattformen statt einer. Firebase wurde nach kurzem Einsatz wieder verworfen (siehe 2.1b) — Cloud Functions dort brauchen zwingend den Blaze-Plan (Kreditkarte hinterlegt, postpaid, kein hartes Limit), Cloudflare Workers laufen im Free-Tier ganz ohne Zahlungsmethode mit hart durchgesetztem Freikontingent.
+- `public/index.html` — die App, Storage-Calls gehen an `API_BASE + '/storage'`, KI-Calls an `API_BASE + '/claude'` (`API_BASE` zeigt auf die Cloudflare-Worker-URL, da Frontend und Backend auf unterschiedlichen Domains laufen).
+- `workers/src/index.js` — ein Cloudflare Worker mit zwei Routen: `/claude` (Proxy zur Anthropic API, Key als Worker Secret) und `/storage` (Key/Value-Speicher, siehe unten).
 - `.github/workflows/pages.yml` — deployt `public/` bei jedem Push auf `main` automatisch nach GitHub Pages.
-- `firebase.json`, `.firebaserc`, `firestore.rules` — Firebase-Konfiguration.
-- Die alten Netlify-Dateien (`netlify.toml`, `netlify/functions/*`) wurden entfernt.
+- `workers/wrangler.toml` — Cloudflare-Worker-Konfiguration (u.a. KV-Namespace-Bindung).
+- Die alten Netlify-Dateien (`netlify.toml`, `netlify/functions/*`) und die zwischenzeitlichen Firebase-Dateien (`functions/`, `firebase.json`, `.firebaserc`, `firestore.rules`) wurden entfernt.
 
-### 2.1b Ablösung Netlify Blobs → Firestore — umgesetzt (Neon-Plan verworfen)
-Ursprünglich war (aus Gesprächen nach dem ersten Netlify-Deploy) eine Ablösung von Netlify Blobs durch **Neon (serverless Postgres)** angedacht — u.a. weil Postgres + JDBC der ausgetretenste Pfad für Minecraft-Plugin-Entwicklung ist. Mit dem Umzug weg von Netlify wurde stattdessen **Firestore** (Teil von Firebase, sowieso schon fürs Backend im Einsatz) als Speicher gewählt — kein Grund, für den Speicher eine dritte Plattform (Neon) zusätzlich zu GitHub Pages + Firebase einzuführen.
+### 2.1b Ablösung Netlify Blobs → Firestore → Cloudflare KV (Neon-Plan verworfen)
+Ursprünglich war (aus Gesprächen nach dem ersten Netlify-Deploy) eine Ablösung von Netlify Blobs durch **Neon (serverless Postgres)** angedacht — u.a. weil Postgres + JDBC der ausgetretenste Pfad für Minecraft-Plugin-Entwicklung ist. Mit dem Umzug weg von Netlify wurde stattdessen zunächst **Firestore** (Teil von Firebase, damals sowieso fürs Backend im Einsatz) als Speicher gewählt. Nach dem Wechsel des Backends auf Cloudflare (siehe 2.1a) übernimmt jetzt stattdessen **Cloudflare KV** dieselbe Rolle — aus demselben Grund: kein Bedarf für eine dritte Plattform (Neon) neben GitHub Pages + Cloudflare.
 
-Für die Minecraft-Integration bedeutet das: statt Postgres/JDBC würde das Java-Plugin über die **Firestore Admin SDK für Java** oder per HTTP gegen die `storage`-Cloud-Function auf denselben Datenbestand zugreifen. Weniger konventionell als Postgres/JDBC in der Minecraft-Plugin-Welt, aber dafür keine zusätzliche Plattform/kein zusätzlicher Account nötig.
+Für die Minecraft-Integration bedeutet das: statt Postgres/JDBC würde das Java-Plugin per HTTP gegen die `/storage`-Route des Workers auf denselben Datenbestand zugreifen (ein direkter Java-Zugriff auf Cloudflare KV ohne Umweg über HTTP ist nicht vorgesehen — KV ist als HTTP-API bzw. Worker-Binding gedacht, nicht als Datenbank mit eigenem Treiber). Weniger konventionell als Postgres/JDBC in der Minecraft-Plugin-Welt, aber dafür keine zusätzliche Plattform/kein zusätzlicher Account nötig.
 
-**Offen/zu tun (siehe auch Abschnitt 5):** Aktuell liegt der App-Zustand weiterhin als ein großer JSON-Blob unter einem Firestore-Dokument (`appState/mg_v4`) — die einfachste Migration vom alten Netlify-Blob-Modell. Für die Minecraft-Integration wird das wahrscheinlich in echte Firestore-Collections (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufgebrochen werden müssen, damit das Java-Plugin gezielt einzelne Datensätze abfragen kann statt immer den kompletten Blob zu laden/parsen.
+**Offen/zu tun (siehe auch Abschnitt 5):** Aktuell liegt der App-Zustand weiterhin als ein großer JSON-Blob unter einem KV-Key (`mg_v4`) — die einfachste Migration vom alten Netlify-Blob-Modell. Für die Minecraft-Integration wird das wahrscheinlich in echte, einzeln abfragbare Datensätze (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufgebrochen werden müssen — entweder als mehrere KV-Keys oder, falls relationale Abfragen nötig werden, mit **Cloudflare D1** (SQLite-basiert, ebenfalls kostenlos ohne Zahlungsmethode nutzbar), damit das Java-Plugin gezielt einzelne Datensätze abfragen kann statt immer den kompletten Blob zu laden/parsen.
 
  (Questgeber-Architektur, aktueller Stand — WICHTIG: das ist NICHT die ursprüngliche 1:1-"ein Unterkapitel = eine Quest"-Version, sondern ein kompletter Umbau)
 
@@ -133,7 +133,7 @@ Modul (= ein Studienbrief):
 
 ### 4.1 Architektur-Entscheidung
 - **Server-Plugin (Paper/Spigot, Java)** statt Client-Mod (Fabric/Forge) — pragmatischer, funktioniert auch für Singleplayer über einen lokalen Server, KI-Calls laufen serverseitig (Java kann problemlos HTTP).
-- **Backend: Firebase (Cloud Functions + Firestore)** — bereits umgesetzt (siehe 2.1a/2.1b, ersetzt den ursprünglich angedachten Netlify+Neon-Ansatz). Sowohl die Web-App als auch das künftige MC-Plugin sprechen mit demselben Backend. Der Anthropic-API-Key liegt nur einmal serverseitig (`functions/index.js`, Firebase Secret).
+- **Backend: Cloudflare (Workers + KV)** — bereits umgesetzt (siehe 2.1a/2.1b, ersetzt den ursprünglich angedachten Netlify+Neon-Ansatz sowie das zwischenzeitliche Firebase-Backend). Sowohl die Web-App als auch das künftige MC-Plugin sprechen mit demselben Backend. Der Anthropic-API-Key liegt nur einmal serverseitig (`workers/src/index.js`, Worker Secret).
 - **Aufgabenteilung:** Minecraft = Entdecken/Freischalten/Erklären. Web-App = tatsächliches Lösen der Quests (Skilltree-Nachbau ingame wurde bewusst verworfen — zu aufwändig, kein Mehrwert ggü. der Web-App).
 - NPCs technisch über das **Citizens**-Plugin (Standard-Library für sowas).
 
@@ -172,10 +172,10 @@ Weitere offene Gedanken:
 ---
 
 ## 5. Offene Punkte / nächste Schritte
-- [x] Web-App eigenständig deploybar gemacht: Frontend auf GitHub Pages, Backend auf Firebase (`claude`, `storage` als Cloud Functions, Firestore statt Netlify Blobs) — siehe README.md
-- [ ] **Nächster konkreter Schritt:** `functions/index.js`/Firestore vom groben JSON-Blob (`appState/mg_v4`) auf echte Collections (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufbrechen, spätestens nötig für die Minecraft-Integration.
+- [x] Web-App eigenständig deploybar gemacht: Frontend auf GitHub Pages, Backend auf Cloudflare (`/claude`, `/storage` als Worker-Routen, KV statt Netlify Blobs/Firestore) — siehe README.md
+- [ ] **Nächster konkreter Schritt:** `workers/src/index.js`/KV vom groben JSON-Blob (`mg_v4`) auf echte, einzeln abfragbare Datensätze (Module, Kapitel, Unterkapitel, Questgeber, Fortschritt) aufbrechen, spätestens nötig für die Minecraft-Integration.
 - [ ] Paper-Plugin-Grundgerüst (Maven/Gradle, Citizens-Integration, NPC-Placement-Config)
-- [ ] Plugin verbindet sich mit derselben Firestore-Instanz — entweder per Firestore Admin SDK für Java (Service-Account-Key) oder per HTTP gegen die `storage`-Cloud-Function
+- [ ] Plugin verbindet sich mit demselben Datenbestand — per HTTP gegen die `/storage`-Worker-Route (ein direkter Java-Zugriff auf Cloudflare KV ohne HTTP-Umweg ist nicht vorgesehen)
 - [ ] Prof-NPC-Chat-Logik (System-Prompt mit Guardrail "erklären ja, Quest lösen nein")
 - [ ] Zonen-Konzept konkretisieren (Koordinaten/Regionen, WorldGuard oder simple Bounding-Boxes)
 - [ ] Belohnungssystem final entscheiden (Soforteffekte vs. Meilensteine) und Item-Hüllen pro Fach-Stat definieren
@@ -183,5 +183,5 @@ Weitere offene Gedanken:
 
 ## 6. Mitgelieferte Dateien (siehe Repo-Struktur)
 - `public/index.html` — die aktuelle, funktionierende Web-App. Stand: Questgeber-System mit On-Demand-Generierung, Entdecken-Tab, Themen-Checkliste, neuer Erzählform ohne Aufgabenliste, Reset-Funktion, eigene Dialog-Overlays, angebunden an `API_BASE + '/claude'` + `API_BASE + '/storage'`.
-- `functions/index.js`, `firebase.json`, `.firebaserc`, `firestore.rules`, `.github/workflows/pages.yml` — GitHub-Pages/Firebase-Deployment (siehe README.md für Setup).
+- `workers/src/index.js`, `workers/wrangler.toml`, `.github/workflows/pages.yml` — GitHub-Pages/Cloudflare-Deployment (siehe README.md für Setup).
 - `docs/quest_generierung_spec.md` — die Original-Spec für die Quest-Generierung (Muster A/B/C/D, Ablauf, Sonderregeln). Die Verfeinerung zur Erzählform (Abschnitt 3.3 hier) ergänzt diese Spec, ersetzt sie nicht.
