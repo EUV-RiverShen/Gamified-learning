@@ -1007,6 +1007,10 @@ let qmActiveTab = 'npc';
 let qmGenerating = false;
 let qmBossAnswer = '';
 let qmBossFeedback = null;
+let qmQuestAnswer = '';
+let qmQuestFeedback = null; // { pass, text } | null — Ergebnis einer NICHT bestandenen Antwort (NPC wurde ausgetauscht)
+let qmQuestError = null; // String | null — technischer Fehler bei der Bewertung selbst (NPC bleibt derselbe)
+let qmSubmittingAnswer = false;
 
 async function openQuestModal(questgeberId) {
   const loc = findQuestgeber(questgeberId);
@@ -1015,6 +1019,10 @@ async function openQuestModal(questgeberId) {
   qmActiveTab = 'npc';
   qmBossAnswer = '';
   qmBossFeedback = null;
+  qmQuestAnswer = '';
+  qmQuestFeedback = null;
+  qmQuestError = null;
+  qmSubmittingAnswer = false;
   document.getElementById('modal-root').innerHTML = ''; // ggf. Questgeber-Liste schließen
   renderQuestModal();
 
@@ -1071,6 +1079,7 @@ function renderNpcTab(qg) {
 
   if (!q.accepted) {
     return `
+      ${qmQuestFeedback && !qmQuestFeedback.pass ? `<div class="boss-feedback fail">${escapeHtml(qmQuestFeedback.text)} ${escapeHtml(qg.name)} übernimmt jetzt für dich.</div>` : ''}
       <div class="npc-hook">${escapeHtml(q.npcHook)}</div>
       <div style="margin-top:16px;display:flex;justify-content:flex-end;">
         <button class="btn btn-primary" onclick="acceptQuest()">Quest annehmen</button>
@@ -1091,14 +1100,20 @@ function renderNpcTab(qg) {
       <input type="text" id="npc-chat-input" placeholder="Frag den Questgeber etwas..." onkeydown="if(event.key==='Enter') sendNpcChat()">
       <button class="btn btn-sm" onclick="sendNpcChat()">Senden</button>
     </div>
-    <div style="margin-top:16px;display:flex;justify-content:flex-end;">
-      <button class="btn btn-primary" onclick="completeQuest()">Quest abschließen &amp; XP kassieren</button>
+    <div class="boss-q" style="margin-top:16px;">
+      <div class="bq-text">Deine Antwort an ${escapeHtml(qg.name)}:</div>
+      <textarea id="quest-answer-input" placeholder="Schreib deine Antwort/Erklärung..." ${qmSubmittingAnswer ? 'disabled' : ''}>${escapeHtml(qmQuestAnswer)}</textarea>
+    </div>
+    ${qmQuestError ? `<div class="boss-feedback fail">${escapeHtml(qmQuestError)}</div>` : ''}
+    <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary" id="quest-submit-btn" onclick="submitQuestAnswer()" ${qmSubmittingAnswer ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : 'Antwort einreichen'}</button>
     </div>
   `;
 }
 
 async function acceptQuest() {
   currentQuestCtx.questgeber.currentQuest.accepted = true;
+  qmQuestFeedback = null;
   await saveState();
   renderQuestModal();
   renderQuestPanel();
@@ -1146,6 +1161,57 @@ function renderMapTab(m) {
       <div class="ke-terms">${e.coveredKp.map(k=>escapeHtml(k.label)).join(', ')}</div>
     </div>
   `).join('');
+}
+
+// Bewertet die eingereichte Antwort gegen die Zielkernpunkte der aktuellen Quest
+// (gleiches Muster wie submitBossAnswer() weiter unten). Bei bestanden: XP wie
+// bisher über completeQuest(). Bei nicht bestanden: KEINE XP, Kernpunkte bleiben
+// offen — stattdessen verschwindet dieser NPC und ein neuer (anderer Name, neues
+// persönliches Problem, aber dieselben Zielkernpunkte) taucht an seiner Stelle auf,
+// damit der Spieler denselben Stoff nochmal in einem frischen Fall üben kann.
+async function submitQuestAnswer() {
+  const input = document.getElementById('quest-answer-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  qmQuestAnswer = answer;
+  qmSubmittingAnswer = true;
+  renderQuestModal();
+
+  const { subnode: sn, questgeber: qg } = currentQuestCtx;
+  const q = qg.currentQuest;
+  const targetIds = q.targetKernpunkteIds || [];
+  const targetLabels = targetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
+
+  const prompt = `Du bewertest die Antwort eines Lernenden auf eine fallbasierte Lern-Quest.
+Anliegen des NPCs (${qg.name}): ${q.scenario}
+Zielkernpunkte, die die Antwort inhaltlich korrekt abdecken/anwenden muss: ${JSON.stringify(targetLabels)}
+Antwort des Lernenden: "${answer}"
+
+Antworte NUR als JSON (keine Backticks): {"pass": true/false, "feedback": "kurzes, konstruktives Feedback auf Deutsch, 2-4 Sätze"}
+pass=true nur wenn die Zielkernpunkte inhaltlich korrekt angewendet/erklärt wurden (Formulierung darf abweichen, muss aber fachlich stimmen und wirklich zur Anfrage des NPCs passen).`;
+
+  let parsed;
+  try {
+    const raw = await callClaude(prompt, 500);
+    parsed = parseJsonLoose(raw);
+  } catch (e) {
+    qmSubmittingAnswer = false;
+    qmQuestError = 'Bewertung konnte nicht geladen werden. Versuch es nochmal.';
+    renderQuestModal();
+    return;
+  }
+  qmQuestError = null;
+
+  if (parsed.pass) {
+    await completeQuest();
+  } else {
+    qmQuestFeedback = { pass: false, text: parsed.feedback || 'Das trifft die Sache noch nicht ganz — versuch es nochmal.' };
+    qmQuestAnswer = '';
+    await regenerateQuestAfterFailure(currentQuestCtx, targetIds);
+    qmSubmittingAnswer = false;
+    renderQuestModal();
+    renderQuestPanel();
+  }
 }
 
 async function completeQuest() {
@@ -1288,24 +1354,33 @@ function parseJsonLoose(raw) {
 /* =========================================================================
    ON-DEMAND QUEST-GENERIERUNG
 ========================================================================= */
-async function generateAndSetQuest(loc) {
+async function generateAndSetQuest(loc, opts = {}) {
   qmGenerating = true;
   renderQuestModal();
   const { module: m, chapter: ch, subnode: sn, questgeber: qg } = loc;
 
-  // Zielkernpunkte: bevorzugt der eigene Schwerpunkt, aber der GESAMTE Unterkapitel-Pool ist erlaubt
-  // (Fragen sollen sich nicht auf genau einen Block beschränken) — nur "komplett identisch" zu anderen
-  // Questgebern soll vermieden werden, dafür kriegt der Prompt die Geschwister-Schwerpunkte + letzte Titel.
-  const own = qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
-  const wholeSubnodePool = sn.kernpunkte;
-  let targets = own.filter(k => !k.covered);
-  if (targets.length === 0) targets = wholeSubnodePool.filter(k => !k.covered);
-  let isReview = false;
+  let targets, isReview;
   const priorSubnodes = flatSubnodes(m).filter(x => x.subnode.globalIndex < sn.globalIndex).map(x => x.subnode);
-  if (targets.length === 0) {
-    isReview = true;
-    const pool = wholeSubnodePool.concat(priorSubnodes.flatMap(s => s.kernpunkte));
-    targets = shuffleArray(pool).slice(0, Math.min(4, Math.max(2, pool.length)));
+  if (opts.forcedTargetIds && opts.forcedTargetIds.length) {
+    // Wiederholungsversuch nach nicht bestandener Antwort: exakt dieselben
+    // Zielkernpunkte wie bei der fehlgeschlagenen Quest, nicht neu würfeln —
+    // der Spieler soll denselben Stoff nochmal üben, kein anderes Thema.
+    targets = opts.forcedTargetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
+    isReview = false;
+  } else {
+    // Zielkernpunkte: bevorzugt der eigene Schwerpunkt, aber der GESAMTE Unterkapitel-Pool ist erlaubt
+    // (Fragen sollen sich nicht auf genau einen Block beschränken) — nur "komplett identisch" zu anderen
+    // Questgebern soll vermieden werden, dafür kriegt der Prompt die Geschwister-Schwerpunkte + letzte Titel.
+    const own = qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
+    const wholeSubnodePool = sn.kernpunkte;
+    targets = own.filter(k => !k.covered);
+    if (targets.length === 0) targets = wholeSubnodePool.filter(k => !k.covered);
+    isReview = false;
+    if (targets.length === 0) {
+      isReview = true;
+      const pool = wholeSubnodePool.concat(priorSubnodes.flatMap(s => s.kernpunkte));
+      targets = shuffleArray(pool).slice(0, Math.min(4, Math.max(2, pool.length)));
+    }
   }
 
   const knownVocab = priorSubnodes.flatMap(s => s.kernpunkte.map(k => k.label));
@@ -1324,16 +1399,18 @@ WICHTIGE REGEL — Quest-Spec:
 2. Wähle EIN Fallmuster: A (Decodier-Fall: du musst Fachsprache für den NPC einordnen/übersetzen, weil er direkt vor einer Entscheidung steht), B (Diagnose-Fall: du musst die echte Ursache unter mehreren Kandidaten finden und begründen, warum die anderen es nicht sind — eingebettet in ein echtes Anliegen, nicht als Zuordnungsübung formuliert), C (Anwendungsfall: du musst aktiv etwas für den NPC konstruieren/berechnen/planen), D (Merksatz, nur wenn kein Fall möglich ist).
 3. Die Nachricht muss ALLE Zielkernpunkte zwingend brauchen, um sie sinnvoll zu beantworten.
 ${isReview ? '4. Das ist eine WIEDERHOLUNGS-Quest (Ziel bereits früher gelernt) — anderer NPC/andere Situation als zuvor, dieselben Begriffe in frischem Kontext.' : ''}
+${opts.forceNewName ? `5. Der Spieler hat die letzte Antwort bei "${qg.name}" NICHT bestanden — ${qg.name} taucht deshalb nicht mehr auf. Erfinde eine KOMPLETT NEUE Person mit neuem, anderem Vornamen (nicht "${qg.name}") und einem neuen, andersartigen persönlichen Problem/Kontext (anderer Alltag, andere Situation) — aber es geht inhaltlich weiterhin um dieselben Zielkernpunkte. Gib den neuen Vornamen als "name" zurück.` : ''}
 
 Kontext: Unterkapitel "${sn.title}" aus Kapitel "${ch.title}" (Fach-Stat: ${ch.stat}).
-Dieser Questgeber heißt ${qg.name}. Interner Themenschwerpunkt (nur Hinweis für dich, nicht für den Spieler sichtbar): ${qg.label} — du darfst jedes Thema aus dem gesamten Unterkapitel einbauen, wenn es zur Nachricht passt.
+${opts.forceNewName ? '' : `Dieser Questgeber heißt ${qg.name}. `}Interner Themenschwerpunkt (nur Hinweis für dich, nicht für den Spieler sichtbar): ${qg.label} — du darfst jedes Thema aus dem gesamten Unterkapitel einbauen, wenn es zur Nachricht passt.
 Andere Questgeber in diesem Unterkapitel (deine Nachricht sollte sich davon klar unterscheiden, nicht komplett identisch sein): ${siblingNames.length ? siblingNames.join(', ') : '(keine)'}
 Zuletzt in diesem Unterkapitel benutzte Quest-Titel (nicht wiederholen): ${recentTitlesHere.length ? recentTitlesHere.join(', ') : '(keine)'}
 Relevanter Studienbrief-Auszug: ${sn.sourceExcerpt || '(kein Auszug verfügbar, nutze dein Wissen zu diesem Thema)'}
 Begriffe, die der Spieler schon kennt und die OHNE Erklärung benutzt werden dürfen: ${knownVocab.length ? knownVocab.join(', ') : '(noch keine)'}
 
 KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine doppelten Anführungszeichen in String-Werten (einfache nutzen oder umschreiben).
-{
+{${opts.forceNewName ? `
+  "name": "Neuer Vorname für den NPC (echter Vorname, anders als '${qg.name}')",` : ''}
   "title": "Kurzer Titel",
   "xp": 15,
   "muster": "A",
@@ -1345,6 +1422,7 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   try {
     const raw = await callClaude(prompt, 3000);
     const parsed = parseJsonLoose(raw);
+    if (opts.forceNewName && parsed.name) qg.name = parsed.name;
     qg.currentQuest = {
       id: uid('q'),
       title: parsed.title || ('Anliegen von ' + qg.name),
@@ -1369,6 +1447,13 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   }
   qmGenerating = false;
   renderQuestModal();
+}
+
+// Nicht bestandene Antwort: der bisherige Questgeber-Name wird durch einen neuen
+// ersetzt (siehe forceNewName oben), aber dieselben Zielkernpunkte bleiben — der
+// Spieler übt denselben Stoff nochmal, nur mit neuem NPC/neuem Fall.
+async function regenerateQuestAfterFailure(loc, targetIds) {
+  await generateAndSetQuest(loc, { forcedTargetIds: targetIds, forceNewName: true });
 }
 
 function shuffleArray(arr) {
