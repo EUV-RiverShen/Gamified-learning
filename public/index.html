@@ -1007,7 +1007,6 @@ let qmActiveTab = 'npc';
 let qmGenerating = false;
 let qmBossAnswer = '';
 let qmBossFeedback = null;
-let qmQuestAnswer = '';
 let qmQuestFeedback = null; // { pass, text } | null — Ergebnis einer NICHT bestandenen Antwort (NPC wurde ausgetauscht)
 let qmQuestError = null; // String | null — technischer Fehler bei der Bewertung selbst (NPC bleibt derselbe)
 let qmSubmittingAnswer = false;
@@ -1019,7 +1018,6 @@ async function openQuestModal(questgeberId) {
   qmActiveTab = 'npc';
   qmBossAnswer = '';
   qmBossFeedback = null;
-  qmQuestAnswer = '';
   qmQuestFeedback = null;
   qmQuestError = null;
   qmSubmittingAnswer = false;
@@ -1097,16 +1095,12 @@ function renderNpcTab(qg) {
       ${chat.map(m => `<div class="npc-msg ${m.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('')}
     </div>
     <div class="chat-input-row">
-      <input type="text" id="npc-chat-input" placeholder="Frag den Questgeber etwas..." onkeydown="if(event.key==='Enter') sendNpcChat()">
-      <button class="btn btn-sm" onclick="sendNpcChat()">Senden</button>
-    </div>
-    <div class="boss-q" style="margin-top:16px;">
-      <div class="bq-text">Deine Antwort an ${escapeHtml(qg.name)}:</div>
-      <textarea id="quest-answer-input" placeholder="Schreib deine Antwort/Erklärung..." ${qmSubmittingAnswer ? 'disabled' : ''}>${escapeHtml(qmQuestAnswer)}</textarea>
+      <input type="text" id="npc-chat-input" placeholder="Erklär ${escapeHtml(qg.name)} was du weißt..." onkeydown="if(event.key==='Enter') sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>
+      <button class="btn btn-sm" onclick="sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>Senden</button>
     </div>
     ${qmQuestError ? `<div class="boss-feedback fail">${escapeHtml(qmQuestError)}</div>` : ''}
     <div style="margin-top:14px;display:flex;justify-content:flex-end;">
-      <button class="btn btn-primary" id="quest-submit-btn" onclick="submitQuestAnswer()" ${qmSubmittingAnswer ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : 'Antwort einreichen'}</button>
+      <button class="btn btn-primary" id="quest-submit-btn" onclick="submitQuestAnswer()" ${qmSubmittingAnswer || !chat.some(m => m.role === 'me') ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : 'Antwort einreichen'}</button>
     </div>
   `;
 }
@@ -1163,32 +1157,35 @@ function renderMapTab(m) {
   `).join('');
 }
 
-// Bewertet die eingereichte Antwort gegen die Zielkernpunkte der aktuellen Quest
-// (gleiches Muster wie submitBossAnswer() weiter unten). Bei bestanden: XP wie
-// bisher über completeQuest(). Bei nicht bestanden: KEINE XP, Kernpunkte bleiben
-// offen — stattdessen verschwindet dieser NPC und ein neuer (anderer Name, neues
-// persönliches Problem, aber dieselben Zielkernpunkte) taucht an seiner Stelle auf,
-// damit der Spieler denselben Stoff nochmal in einem frischen Fall üben kann.
+// Bewertet den KOMPLETTEN Chat-Verlauf mit dem NPC gegen die Zielkernpunkte der
+// aktuellen Quest (gleiches Muster wie submitBossAnswer() weiter unten) — kein
+// separates Antwortfeld, das Gespräch selbst ist die Antwort. Bei bestanden: XP
+// wie bisher über completeQuest(). Bei nicht bestanden: KEINE XP, Kernpunkte
+// bleiben offen — stattdessen verschwindet dieser NPC und ein neuer (anderer
+// Name, neues persönliches Problem, aber dieselben Zielkernpunkte) taucht an
+// seiner Stelle auf, damit der Spieler denselben Stoff nochmal in einem
+// frischen Fall (und frischem Chat) üben kann.
 async function submitQuestAnswer() {
-  const input = document.getElementById('quest-answer-input');
-  const answer = input.value.trim();
-  if (!answer) return;
-  qmQuestAnswer = answer;
+  const { subnode: sn, questgeber: qg } = currentQuestCtx;
+  const q = qg.currentQuest;
+  const chat = q.npcChat || [];
+  if (!chat.some(m => m.role === 'me')) return; // nichts zu bewerten
+
   qmSubmittingAnswer = true;
   renderQuestModal();
 
-  const { subnode: sn, questgeber: qg } = currentQuestCtx;
-  const q = qg.currentQuest;
   const targetIds = q.targetKernpunkteIds || [];
   const targetLabels = targetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
+  const transcript = chat.map(m => `${m.role === 'me' ? 'Spieler' : qg.name}: ${m.text}`).join('\n');
 
-  const prompt = `Du bewertest die Antwort eines Lernenden auf eine fallbasierte Lern-Quest.
+  const prompt = `Du bewertest, ob ein Lernender im Gespräch mit einem NPC dessen Anliegen erfolgreich gelöst hat.
 Anliegen des NPCs (${qg.name}): ${q.scenario}
-Zielkernpunkte, die die Antwort inhaltlich korrekt abdecken/anwenden muss: ${JSON.stringify(targetLabels)}
-Antwort des Lernenden: "${answer}"
+Zielkernpunkte, die im Gespräch inhaltlich korrekt erklärt/angewendet worden sein müssen: ${JSON.stringify(targetLabels)}
+Gesprächsverlauf (Spieler = Lernender, ${qg.name} = NPC):
+${transcript}
 
 Antworte NUR als JSON (keine Backticks): {"pass": true/false, "feedback": "kurzes, konstruktives Feedback auf Deutsch, 2-4 Sätze"}
-pass=true nur wenn die Zielkernpunkte inhaltlich korrekt angewendet/erklärt wurden (Formulierung darf abweichen, muss aber fachlich stimmen und wirklich zur Anfrage des NPCs passen).`;
+pass=true nur wenn ALLE Zielkernpunkte irgendwo im Gesprächsverlauf inhaltlich korrekt vom Spieler erklärt/angewendet wurden (Formulierung darf abweichen, muss aber fachlich stimmen und wirklich zum Anliegen des NPCs passen). Es zählt der gesamte Verlauf, nicht nur die letzte Nachricht.`;
 
   let parsed;
   try {
@@ -1206,7 +1203,6 @@ pass=true nur wenn die Zielkernpunkte inhaltlich korrekt angewendet/erklärt wur
     await completeQuest();
   } else {
     qmQuestFeedback = { pass: false, text: parsed.feedback || 'Das trifft die Sache noch nicht ganz — versuch es nochmal.' };
-    qmQuestAnswer = '';
     await regenerateQuestAfterFailure(currentQuestCtx, targetIds);
     qmSubmittingAnswer = false;
     renderQuestModal();
