@@ -1357,6 +1357,7 @@ async function sendNpcChat() {
   const q = currentQuestCtx.questgeber.currentQuest;
   if (!q.npcChat) q.npcChat = [];
   q.npcChat.push({ role: 'me', text });
+  await saveState(); // sofort sichern — nicht erst warten, bis die Quest fertig/eingereicht ist
   renderQuestModal(); focusChatInput();
 
   const prompt = `Du spielst die Rolle eines Questgebers (Laie ohne Fachwissen) in einer Lern-App.
@@ -1369,8 +1370,10 @@ Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen d
     const reply = await callClaude(prompt, 300);
     q.npcChat.push({ role: 'npc', text: reply.trim() });
   } catch (e) {
+    console.error('NPC-Chat-Antwort fehlgeschlagen:', e);
     q.npcChat.push({ role: 'npc', text: '(Antwort konnte nicht geladen werden — versuch es nochmal.)' });
   }
+  await saveState();
   renderQuestModal(); focusChatInput();
 }
 function focusChatInput() { setTimeout(() => { const box = document.getElementById('npc-chat-box'); if (box) box.scrollTop = box.scrollHeight; }, 0); }
