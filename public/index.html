@@ -119,6 +119,14 @@ input, select, textarea{ font-family: inherit; }
 }
 .module-tile:hover .tile-del-btn{ opacity:1; }
 .tile-del-btn:hover{ color:#fff; background: var(--red); }
+.tile-goal-btn{
+  position:absolute; top:10px; right:36px; width:20px; height:20px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-faint);
+  background: var(--card-2); opacity:0; transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+.module-tile:hover .tile-goal-btn{ opacity:1; }
+.tile-goal-btn:hover{ color:#fff; background: var(--blue); }
+.m-daily-goal{ font-size:10.5px; color:var(--text-dim); margin-top:2px; }
 
 /* ---------- Quest panel (fixed) ---------- */
 #quest-panel{
@@ -569,6 +577,8 @@ function renderCharacter() {
       </div>
     </div>
 
+    ${modules.length > 0 ? renderDailyWidget() : ''}
+
     <div class="section-label">Deine Studienbriefe</div>
     ${modules.length === 0 ? `
       <div class="card" style="text-align:center;padding:30px 16px;color:var(--text-dim);">
@@ -671,25 +681,112 @@ function figureSvg(g) {
   </svg>`;
 }
 
-// Fortschritts-Ziel Pace: vergleicht erreichtes Modul-Level mit dem, was laut Zieldatum erwartet wäre
+// Kernpunkte sind die feinste vorhandene Fortschritts-Einheit (feiner als "Level" =
+// abgeschlossene Unterkapitel) — darauf bauen Tagesziel & konkrete Rückstands-
+// Anzeige auf, damit's nicht bei "irgendwie im Rückstand" bleibt.
+function moduleKernpunkteStats(m) {
+  let total = 0, done = 0, doneToday = 0;
+  const today = todayIso();
+  for (const ch of m.chapters) {
+    for (const sn of ch.subnodes) {
+      for (const kp of sn.kernpunkte) {
+        total++;
+        if (kp.covered) {
+          done++;
+          if (kp.coveredDate === today) doneToday++;
+        }
+      }
+    }
+  }
+  return { total, done, remaining: total - done, doneToday };
+}
+
+// Fortschritts-Ziel Pace: vergleicht erreichtes Modul-Level mit dem, was laut Zieldatum
+// erwartet wäre — UND liefert konkrete Zahlen (statt nur eines Status-Labels): wie viele
+// Themenbausteine (Kernpunkte) im Rückstand, und ein Tagesziel, das sich mit dem
+// Baseline-Rückstand automatisch neu berechnet (klassische Restarbeit/Resttage-Rechnung).
 function modulePaceInfo(m) {
   const maxLevel = moduleMaxLevel(m);
   const level = computeModuleLevel(m);
-  if (!m.targetDate || maxLevel === 0) return { pct: maxLevel ? Math.round((level/maxLevel)*100) : 0, status: null, text: '' };
+  const kp = moduleKernpunkteStats(m);
+  if (!m.targetDate || maxLevel === 0) {
+    return { pct: maxLevel ? Math.round((level/maxLevel)*100) : 0, status: null, text: '', kp };
+  }
   const totalDays = Math.max(1, daysBetween(m.startDate, m.targetDate));
   const elapsed = Math.min(totalDays, Math.max(0, daysBetween(m.startDate, todayIso())));
   const expectedLevel = Math.min(maxLevel, (elapsed / totalDays) * maxLevel);
   const diff = level - expectedLevel;
+
+  // Rückstand/Vorsprung auch in Kernpunkten ausgedrückt (proportional zum Level-Diff,
+  // aber in der feineren Einheit) — das ist die Zahl, die tatsächlich was aussagt.
+  const kpPerLevel = maxLevel > 0 ? kp.total / maxLevel : 0;
+  const kpDiff = Math.round(diff * kpPerLevel);
+
   let status = 'ontrack', text = 'im Plan';
-  if (diff >= 1) { status = 'ahead'; text = 'voraus'; }
-  else if (diff <= -1) { status = 'behind'; text = 'im Rückstand'; }
+  if (diff >= 1) { status = 'ahead'; text = `${kpDiff} Themenbausteine voraus`; }
+  else if (diff <= -1) { status = 'behind'; text = `${Math.abs(kpDiff)} Themenbausteine im Rückstand`; }
   const daysLeft = daysBetween(todayIso(), m.targetDate);
+
+  // Tagesziel: Restarbeit gleichmäßig auf die Resttage verteilt. Rechnet sich jeden Tag
+  // neu — wer im Rückstand ist, kriegt automatisch ein höheres Tagesziel, statt dass der
+  // Rückstand nur als Status irgendwo stehenbleibt.
+  const dailyGoal = daysLeft > 0 ? Math.ceil(kp.remaining / daysLeft) : kp.remaining;
+
   return {
     pct: Math.round((level/maxLevel)*100),
     goalPct: Math.round((expectedLevel/maxLevel)*100),
-    status, text,
-    daysLeft
+    status, text, daysLeft, dailyGoal, kp
   };
+}
+
+// Übersicht über ALLE Module hinweg fürs "Heute"-Widget: was ist heute schon
+// geschafft, was wäre insgesamt nötig, und wie viele Tage in Folge war überhaupt
+// was los (Streak) — rein aus vorhandenen Log-/Kernpunkte-Daten abgeleitet, keine
+// eigene Datenhaltung nötig.
+function computeDailyStats() {
+  const today = todayIso();
+  let doneToday = 0, dailyGoalTotal = 0, hasGoals = false;
+  const activityDates = new Set();
+  for (const m of modules) {
+    for (const entry of (m.log || [])) activityDates.add(entry.date);
+    const pace = modulePaceInfo(m);
+    doneToday += pace.kp.doneToday;
+    if (pace.dailyGoal != null && pace.kp.remaining > 0) {
+      dailyGoalTotal += pace.dailyGoal;
+      hasGoals = true;
+    }
+  }
+  // Rückwärts ab heute (bzw. ab gestern, falls heute noch nichts lief — sonst würde
+  // eine laufende Streak schon vor Tagesende fälschlich als "gerissen" wirken) zählen,
+  // solange an jedem Tag mindestens eine Quest abgeschlossen wurde.
+  let streak = 0;
+  let cursor = activityDates.has(today) ? today : addDays(today, -1);
+  while (activityDates.has(cursor)) { streak++; cursor = addDays(cursor, -1); }
+  return { doneToday, dailyGoalTotal, streak, hasGoals };
+}
+
+function renderDailyWidget() {
+  const d = computeDailyStats();
+  if (!d.hasGoals && d.streak === 0 && d.doneToday === 0) return '';
+  return `
+    <div class="card" style="margin-bottom:16px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${d.streak > 0 ? `
+          <span style="font-size:20px;">🔥</span>
+          <div><div style="font-weight:700;font-size:14px;">${d.streak} Tag${d.streak===1?'':'e'} in Folge</div><div style="font-size:11.5px;color:var(--text-dim);">dran geblieben</div></div>
+        ` : `
+          <span style="font-size:20px;">📅</span>
+          <div><div style="font-weight:700;font-size:14px;">Heute starten</div><div style="font-size:11.5px;color:var(--text-dim);">noch keine Streak</div></div>
+        `}
+      </div>
+      ${d.hasGoals ? `
+        <div style="text-align:right;">
+          <div style="font-weight:700;font-size:14px;">${d.doneToday} / ${d.dailyGoalTotal} heute</div>
+          <div style="font-size:11.5px;color:var(--text-dim);">Themenbausteine (alle Module)</div>
+        </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 function renderModuleTile(m) {
@@ -699,6 +796,7 @@ function renderModuleTile(m) {
   const hasFailedChapter = m.chapters.some(c => c._generationFailed);
   return `
     <div class="module-tile" onclick="openSkilltree('${m.id}')">
+      <div class="tile-goal-btn" onclick="event.stopPropagation();openGoalEditModal('${m.id}')" title="Ziel anpassen">🎯</div>
       <div class="tile-del-btn" onclick="event.stopPropagation();deleteModule('${m.id}')" title="Studienbrief entfernen">✕</div>
       <div class="m-title">${escapeHtml(m.title)}</div>
       <div class="m-sub">${escapeHtml(m.subject || '')}</div>
@@ -708,9 +806,82 @@ function renderModuleTile(m) {
       </div>
       <div class="m-meta"><span>Level ${level}/${maxLevel}</span>${pace.daysLeft != null ? `<span>${pace.daysLeft >= 0 ? pace.daysLeft + ' Tage übrig' : 'Ziel überschritten'}</span>` : ''}</div>
       ${pace.status ? `<div class="m-pace ${pace.status}">${pace.status === 'ahead' ? '↑' : pace.status === 'behind' ? '↓' : '→'} ${pace.text}</div>` : ''}
+      ${pace.dailyGoal != null && pace.kp.remaining > 0 ? `<div class="m-daily-goal">🎯 Tagesziel: ${pace.dailyGoal} Themenbausteine ${pace.kp.doneToday > 0 ? `(heute schon ${pace.kp.doneToday})` : ''}</div>` : ''}
       ${hasFailedChapter ? `<div style="position:absolute;bottom:10px;right:10px;color:var(--red);font-size:14px;">⚠</div>` : ''}
     </div>
   `;
+}
+
+/* =========================================================================
+   ZIEL-BEARBEITUNG (Zieldatum eines Moduls nachträglich anpassen)
+========================================================================= */
+let goalEditState = null; // { moduleId, mode: 'relative'|'fixed', days, fixedDate }
+
+function openGoalEditModal(moduleId) {
+  const m = getModule(moduleId);
+  if (!m) return;
+  const daysLeftNow = Math.max(1, daysBetween(todayIso(), m.targetDate || todayIso()));
+  goalEditState = { moduleId, mode: 'relative', days: daysLeftNow, fixedDate: m.targetDate || addDays(todayIso(), 21) };
+  renderGoalEditModal();
+}
+function closeGoalEditModal() { goalEditState = null; document.getElementById('modal-root').innerHTML = ''; }
+function goalEditSwitchMode(mode) { goalEditState.mode = mode; renderGoalEditModal(); }
+function goalEditChangeDays(delta) { goalEditState.days = Math.max(1, Math.min(365, goalEditState.days + delta)); renderGoalEditModal(); }
+function goalEditSetFixedDate(v) { if (v) goalEditState.fixedDate = v; }
+
+function renderGoalEditModal() {
+  const root = document.getElementById('modal-root');
+  if (!goalEditState) { root.innerHTML = ''; return; }
+  const m = getModule(goalEditState.moduleId);
+  if (!m) { root.innerHTML = ''; return; }
+  const s = goalEditState;
+  const previewDate = s.mode === 'relative' ? addDays(todayIso(), s.days) : s.fixedDate;
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) closeGoalEditModal()">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-head">
+          <h2>Ziel für "${escapeHtml(m.title)}"</h2>
+          <button class="btn btn-ghost btn-sm" onclick="closeGoalEditModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="qm-tabs" style="margin-bottom:16px;border-radius:var(--radius-sm);border:0.5px solid var(--border);overflow:hidden;">
+            <div class="qm-tab ${s.mode==='relative'?'active':''}" onclick="goalEditSwitchMode('relative')">In N Tagen</div>
+            <div class="qm-tab ${s.mode==='fixed'?'active':''}" onclick="goalEditSwitchMode('fixed')">Festes Datum</div>
+          </div>
+          ${s.mode === 'relative' ? `
+            <div class="days-picker">
+              <button class="btn" onclick="goalEditChangeDays(-1)">−</button>
+              <div class="days-num">${s.days}</div>
+              <button class="btn" onclick="goalEditChangeDays(1)">+</button>
+            </div>
+            <div class="days-endinfo">Ziel ca. ${formatDateShort(previewDate)}</div>
+          ` : `
+            <div style="display:flex;justify-content:center;">
+              <input type="date" id="goal-fixed-date-input" value="${s.fixedDate}" min="${todayIso()}" oninput="goalEditSetFixedDate(this.value)" style="padding:9px 11px;border-radius:8px;border:0.5px solid var(--border);background:var(--card-2);color:var(--text);font-size:14px;">
+            </div>
+          `}
+          <p style="color:var(--text-faint);font-size:11.5px;margin-top:14px;">Dein bisheriger Fortschritt bleibt erhalten — nur das Ziel-Datum ändert sich, dein Start bleibt wie er war.</p>
+          <div style="margin-top:18px;display:flex;justify-content:flex-end;gap:8px;">
+            <button class="btn btn-ghost" onclick="closeGoalEditModal()">Abbrechen</button>
+            <button class="btn btn-primary" onclick="saveGoalEdit()">Speichern</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveGoalEdit() {
+  const m = getModule(goalEditState.moduleId);
+  if (!m) return;
+  const s = goalEditState;
+  const newTarget = s.mode === 'relative' ? addDays(todayIso(), s.days) : s.fixedDate;
+  if (!newTarget) return;
+  m.targetDate = newTarget;
+  await saveState();
+  closeGoalEditModal();
+  renderCharacter();
+  if (currentView === 'skilltree' && activeModuleId === m.id) renderSkilltree();
 }
 
 async function deleteModule(moduleId) {
@@ -732,7 +903,7 @@ async function resetModuleProgress(moduleId) {
   showConfirmDialog(`Fortschritt von "${m.title}" wirklich zurücksetzen? Alle abgehakten Themen, offenen Quests und der XP-Verlauf dieses Studienbriefs gehen verloren — als wäre er gerade frisch hochgeladen.`, async () => {
     for (const ch of m.chapters) {
       for (const sn of ch.subnodes) {
-        for (const kp of sn.kernpunkte) kp.covered = false;
+        for (const kp of sn.kernpunkte) { kp.covered = false; kp.coveredDate = null; }
         for (const qg of sn.questgeber) qg.currentQuest = null;
         if (sn.exercise) sn.exercise.passed = false;
       }
@@ -810,17 +981,27 @@ function renderSkilltree() {
   const level = computeModuleLevel(m);
   const maxLevel = moduleMaxLevel(m);
   const levelPct = maxLevel ? Math.round((level/maxLevel)*100) : 0;
+  const pace = modulePaceInfo(m);
 
   const tabsHtml = `
     <div class="tree-topbar">
       <button class="btn btn-ghost" onclick="backToCharacter()">← Zurück</button>
       <span class="tt-title">${escapeHtml(m.title)}</span>
-      <button class="btn btn-ghost btn-sm" onclick="resetModuleProgress('${m.id}')" title="Fortschritt zurücksetzen (zum Testen)">↺ Reset</button>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-ghost btn-sm" onclick="openGoalEditModal('${m.id}')" title="Ziel anpassen">🎯 Ziel</button>
+        <button class="btn btn-ghost btn-sm" onclick="resetModuleProgress('${m.id}')" title="Fortschritt zurücksetzen (zum Testen)">↺ Reset</button>
+      </div>
     </div>
     <div class="tree-level-bar">
       <span class="lvl-num">Level ${level}/${maxLevel}</span>
       <div class="lvl-track"><div class="lvl-fill" style="width:${levelPct}%"></div></div>
     </div>
+    ${pace.status ? `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:-6px 0 12px;font-size:11.5px;">
+        <span class="m-pace ${pace.status}" style="margin:0;">${pace.status === 'ahead' ? '↑' : pace.status === 'behind' ? '↓' : '→'} ${pace.text}</span>
+        ${pace.dailyGoal != null && pace.kp.remaining > 0 ? `<span style="color:var(--text-dim);">🎯 Tagesziel: ${pace.dailyGoal}${pace.kp.doneToday > 0 ? ` (heute ${pace.kp.doneToday})` : ''}</span>` : ''}
+      </div>
+    ` : ''}
     <div class="qm-tabs" style="margin-bottom:14px;border-radius:var(--radius-sm);border:0.5px solid var(--border);overflow:hidden;">
       <div class="qm-tab ${currentModuleTab==='tree'?'active':''}" onclick="switchModuleTab('tree')">🌳 Skilltree</div>
       <div class="qm-tab ${currentModuleTab==='questgeber'?'active':''}" onclick="switchModuleTab('questgeber')">🧭 Entdecken</div>
@@ -1324,11 +1505,13 @@ async function completeQuest() {
   const q = qg.currentQuest;
   if (!q) return;
 
-  // Kernpunkte als abgedeckt markieren
+  // Kernpunkte als abgedeckt markieren (+ Datum, für Tagesziele/tägl. Fortschritt —
+  // ältere, schon vor diesem Feature abgedeckte Kernpunkte haben kein coveredDate,
+  // das ist ok: sie zählen dann einfach nicht in "heute geschafft" mit rein)
   const targetIds = q.targetKernpunkteIds || [];
   for (const kpId of targetIds) {
     const kp = sn.kernpunkte.find(k => k.id === kpId);
-    if (kp) kp.covered = true;
+    if (kp) { kp.covered = true; kp.coveredDate = todayIso(); }
   }
   // Log-Eintrag für XP/Wissenskarte
   if (!m.log) m.log = [];
