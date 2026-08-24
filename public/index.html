@@ -1032,6 +1032,7 @@ let qmBossFeedback = null;
 let qmQuestFeedback = null; // { pass, text } | null — Ergebnis einer NICHT bestandenen Antwort (NPC wurde ausgetauscht)
 let qmQuestError = null; // String | null — technischer Fehler bei der Bewertung selbst (NPC bleibt derselbe)
 let qmSubmittingAnswer = false;
+let qmSubmitArmed = false; // true = erster Klick auf "Antwort einreichen" schon erfolgt, zweiter bestätigt
 
 async function openQuestModal(questgeberId) {
   const loc = findQuestgeber(questgeberId);
@@ -1043,6 +1044,7 @@ async function openQuestModal(questgeberId) {
   qmQuestFeedback = null;
   qmQuestError = null;
   qmSubmittingAnswer = false;
+  qmSubmitArmed = false;
   dismissQuestResult();
   document.getElementById('modal-root').innerHTML = ''; // ggf. Questgeber-Liste schließen
   renderQuestModal();
@@ -1092,7 +1094,7 @@ function renderQuestModal() {
     </div>
   `;
 }
-function switchQmTab(t) { qmActiveTab = t; renderQuestModal(); }
+function switchQmTab(t) { qmActiveTab = t; qmSubmitArmed = false; renderQuestModal(); }
 
 function renderNpcTab(qg) {
   const q = qg.currentQuest;
@@ -1122,8 +1124,9 @@ function renderNpcTab(qg) {
       <button class="btn btn-sm" onclick="sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>Senden</button>
     </div>
     ${qmQuestError ? `<div class="boss-feedback fail">${escapeHtml(qmQuestError)}</div>` : ''}
-    <div style="margin-top:14px;display:flex;justify-content:flex-end;">
-      <button class="btn btn-primary" id="quest-submit-btn" onclick="submitQuestAnswer()" ${qmSubmittingAnswer || !chat.some(m => m.role === 'me') ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : 'Antwort einreichen'}</button>
+    <div style="margin-top:14px;display:flex;justify-content:flex-end;align-items:center;gap:10px;">
+      ${qmSubmitArmed ? `<span style="font-size:12px;color:var(--text-dim);cursor:pointer;" onclick="qmSubmitArmed=false;renderQuestModal();">Abbrechen</span>` : ''}
+      <button class="btn ${qmSubmitArmed ? 'btn-danger' : 'btn-primary'}" id="quest-submit-btn" onclick="handleQuestSubmitClick()" ${qmSubmittingAnswer || !chat.some(m => m.role === 'me') ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : (qmSubmitArmed ? 'Sicher? Nochmal klicken' : 'Antwort einreichen')}</button>
     </div>
   `;
 }
@@ -1141,6 +1144,7 @@ async function sendNpcChat() {
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
+  qmSubmitArmed = false; // neue Nachricht geschickt statt bestätigt einzureichen — Arm-Status verwirft sich
   const q = currentQuestCtx.questgeber.currentQuest;
   if (!q.npcChat) q.npcChat = [];
   q.npcChat.push({ role: 'me', text });
@@ -1233,6 +1237,30 @@ function renderResultOverlay() {
       </div>
     </div>
   `;
+}
+
+// Klick-Handler für den "Antwort einreichen"-Button: verhindert versehentliches
+// Einreichen (z.B. Verklicken statt "Senden" beim Chatten) auf zwei Wegen —
+// 1. Steht noch unversendeter Text im Chat-Feld, wird gar nicht erst scharf
+//    geschaltet (der Text ginge sonst verloren, ohne bewertet worden zu sein).
+// 2. Sonst braucht's zwei Klicks: der erste schaltet nur "scharf" (Button wird
+//    zur Bestätigung), erst der zweite reicht wirklich ein.
+function handleQuestSubmitClick() {
+  const chatInput = document.getElementById('npc-chat-input');
+  if (chatInput && chatInput.value.trim()) {
+    qmSubmitArmed = false;
+    qmQuestError = 'Du hast noch eine ungesendete Nachricht im Chat-Feld — schick sie zuerst ab (oder lösch sie), bevor du die Antwort einreichst.';
+    renderQuestModal();
+    return;
+  }
+  if (!qmSubmitArmed) {
+    qmSubmitArmed = true;
+    qmQuestError = null;
+    renderQuestModal();
+    return;
+  }
+  qmSubmitArmed = false;
+  submitQuestAnswer();
 }
 
 // Bewertet den KOMPLETTEN Chat-Verlauf mit dem NPC gegen die Zielkernpunkte der
