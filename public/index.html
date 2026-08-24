@@ -1507,8 +1507,9 @@ pass=true nur wenn ALLE Zielkernpunkte irgendwo im Gesprächsverlauf inhaltlich 
     const raw = await callClaude(prompt, 500);
     parsed = parseJsonLoose(raw);
   } catch (e) {
+    console.error('Quest-Bewertung fehlgeschlagen:', e);
     qmSubmittingAnswer = false;
-    qmQuestError = 'Bewertung konnte nicht geladen werden. Versuch es nochmal.';
+    qmQuestError = 'Bewertung konnte nicht geladen werden (' + (e.message || e) + '). Versuch es nochmal.';
     renderQuestModal();
     return;
   }
@@ -1598,7 +1599,8 @@ pass=true nur wenn die Kernpunkte inhaltlich korrekt abgedeckt sind (Formulierun
     if (parsed.pass) exercise.passed = true;
     await saveState();
   } catch (e) {
-    qmBossFeedback = { pass: false, text: 'Bewertung konnte nicht geladen werden. Versuch es nochmal.' };
+    console.error('Boss-Bewertung fehlgeschlagen:', e);
+    qmBossFeedback = { pass: false, text: 'Bewertung konnte nicht geladen werden (' + (e.message || e) + '). Versuch es nochmal.' };
   }
   btn.disabled = false; btn.textContent = 'Antwort einreichen';
   renderQuestModal();
