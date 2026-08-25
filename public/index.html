@@ -13,7 +13,7 @@
   --border: #2a2a30;
   --text: #e8e6e0;
   --text-dim: #9a9894;
-  --text-faint: #6b6a68;
+  --text-faint: #8c8b88;
   --blue: #378ADD;
   --green: #1D9E75;
   --orange: #EF9F27;
@@ -42,7 +42,8 @@ input, select, textarea{ font-family: inherit; }
 .topbar h1{ font-size: 18px; font-weight: 700; margin:0; letter-spacing: 0.2px; }
 .btn{
   background: var(--card-2); border: 0.5px solid var(--border); color: var(--text);
-  padding: 9px 16px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600;
+  padding: 12px 16px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600;
+  min-height: 44px; /* Touch-Ziel-Richtwert (Apple HIG / Material Design) */
   transition: background .15s ease, border-color .15s ease, transform .1s ease;
 }
 .btn:hover{ background:#26262b; border-color:#38383f; }
@@ -52,7 +53,11 @@ input, select, textarea{ font-family: inherit; }
 .btn-ghost{ background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-ghost:hover{ background: var(--card-2); color: var(--text); }
 .btn-danger{ border-color: var(--red); color: var(--red); background:transparent; }
-.btn-sm{ padding:6px 10px; font-size:12.5px; border-radius:7px; }
+/* Bewusst nicht auf volle 44px gebracht (wie .btn) — läuft in engen Toolbar-Zeilen
+   (z.B. "Zurück / Ziel / Reset" nebeneinander), wo 44px die Zeile sprengen würde.
+   40px ist ein deutlicher Sprung ggü. den vorherigen ~29-36px und bleibt trotzdem
+   im Rahmen dieser Zeilen. */
+.btn-sm{ padding:8px 10px; font-size:12.5px; border-radius:7px; min-height:40px; }
 .btn:disabled{ opacity:.4; cursor:not-allowed; }
 
 .card{ background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 16px; }
@@ -112,19 +117,23 @@ input, select, textarea{ font-family: inherit; }
   gap:8px; color:var(--text-dim); font-size:13px; font-weight:600; padding:14px;
 }
 .upload-tile:hover{ border-color:var(--blue); color:var(--blue); }
+/* Auf Touch-Geräten gibt's kein zuverlässiges :hover — diese Icons dürfen deshalb
+   nicht rein hover-gesteuert unsichtbar sein (opacity:0 als Default), sonst sind
+   sie auf dem Handy praktisch unbenutzbar. Gedämpft sichtbar per Default, volle
+   Deckkraft + größerer Tap-Bereich bei Hover ODER Tastatur-Fokus. */
 .tile-del-btn{
-  position:absolute; top:10px; right:10px; width:20px; height:20px; border-radius:50%;
-  display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-faint);
-  background: var(--card-2); opacity:0; transition: opacity .15s ease, color .15s ease, background .15s ease;
+  position:absolute; top:8px; right:8px; width:30px; height:30px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--text-faint);
+  background: var(--card-2); opacity:.65; transition: opacity .15s ease, color .15s ease, background .15s ease;
 }
-.module-tile:hover .tile-del-btn{ opacity:1; }
+.module-tile:hover .tile-del-btn, .tile-del-btn:focus-visible{ opacity:1; }
 .tile-del-btn:hover{ color:#fff; background: var(--red); }
 .tile-goal-btn{
-  position:absolute; top:10px; right:36px; width:20px; height:20px; border-radius:50%;
-  display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-faint);
-  background: var(--card-2); opacity:0; transition: opacity .15s ease, color .15s ease, background .15s ease;
+  position:absolute; top:8px; right:42px; width:30px; height:30px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--text-faint);
+  background: var(--card-2); opacity:.65; transition: opacity .15s ease, color .15s ease, background .15s ease;
 }
-.module-tile:hover .tile-goal-btn{ opacity:1; }
+.module-tile:hover .tile-goal-btn, .tile-goal-btn:focus-visible{ opacity:1; }
 .tile-goal-btn:hover{ color:#fff; background: var(--blue); }
 .m-daily-goal{ font-size:10.5px; color:var(--text-dim); margin-top:2px; }
 
@@ -135,7 +144,7 @@ input, select, textarea{ font-family: inherit; }
   display:flex; flex-direction:column; overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 40;
 }
 #quest-panel.collapsed .qp-body{ display:none; }
-.qp-head{ display:flex; align-items:center; justify-content:space-between; padding: 10px 12px; border-bottom:0.5px solid var(--border); cursor:pointer; }
+.qp-head{ display:flex; align-items:center; justify-content:space-between; padding: 10px 12px; min-height:44px; border-bottom:0.5px solid var(--border); cursor:pointer; }
 .qp-head .title{ font-size:13px; font-weight:700; }
 .qp-body{ overflow-y:auto; padding: 10px 12px 12px; }
 .qp-item{ padding:9px 10px; border-radius:8px; background:var(--card-2); margin-bottom:6px; cursor:pointer; font-size:12.5px; }
@@ -192,7 +201,7 @@ input, select, textarea{ font-family: inherit; }
 
 /* Quest Modal specific */
 .qm-tabs{ display:flex; border-bottom:0.5px solid var(--border); }
-.qm-tab{ flex:1; text-align:center; padding:11px 4px; font-size:12.5px; font-weight:700; color:var(--text-dim); border-bottom: 2px solid transparent; }
+.qm-tab{ flex:1; text-align:center; padding:11px 4px; min-height:44px; display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; color:var(--text-dim); border-bottom: 2px solid transparent; }
 .qm-tab.active{ color:var(--text); border-bottom-color: var(--blue); }
 .npc-hook{ background: var(--card-2); border-radius: var(--radius-sm); padding:14px; font-size:14px; line-height:1.5; border-left: 3px solid var(--orange); }
 .scenario-box{ font-size:14px; line-height:1.6; white-space:pre-wrap; margin-bottom:14px;}
