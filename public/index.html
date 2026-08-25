@@ -1376,7 +1376,17 @@ Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen d
   await saveState();
   renderQuestModal(); focusChatInput();
 }
-function focusChatInput() { setTimeout(() => { const box = document.getElementById('npc-chat-box'); if (box) box.scrollTop = box.scrollHeight; }, 0); }
+// Scrollt den tatsächlich scrollbaren Container (.modal-body, siehe CSS
+// overflow-y:auto) nach unten — NICHT #npc-chat-box selbst, der hat kein
+// eigenes Overflow, wächst nur innerhalb von .modal-body. Bei jedem Re-Render
+// entsteht .modal-body neu (Scroll-Position springt auf 0), deshalb nach
+// jeder Chat-Nachricht erneut ans Ende scrollen.
+function focusChatInput() {
+  setTimeout(() => {
+    const body = document.querySelector('#modal-root .modal-body');
+    if (body) body.scrollTop = body.scrollHeight;
+  }, 0);
+}
 
 function renderMapTab(m) {
   const entries = [];
