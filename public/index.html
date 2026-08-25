@@ -1344,15 +1344,25 @@ async function sendNpcChat() {
   if (!text) return;
   input.value = '';
   qmSubmitArmed = false; // neue Nachricht geschickt statt bestätigt einzureichen — Arm-Status verwirft sich
-  const q = currentQuestCtx.questgeber.currentQuest;
+  const { subnode: sn, questgeber: qg } = currentQuestCtx;
+  const q = qg.currentQuest;
   if (!q.npcChat) q.npcChat = [];
   q.npcChat.push({ role: 'me', text });
   await saveState(); // sofort sichern — nicht erst warten, bis die Quest fertig/eingereicht ist
   renderQuestModal(); focusChatInput();
 
+  // Zielkernpunkte als Leitplanke mitgeben, sonst improvisiert der NPC im freien Chat
+  // komplett ungebunden — kann dabei neue, vom Studienbrief nicht gedeckte Themen/
+  // Behauptungen einführen (beobachtet: ein NPC im Unterkapitel "Aufbau der Zelle"
+  // hat unaufgefordert eine Ernährungs-Timing-Praxisfrage samt eigener, sachlich
+  // fragwürdiger Behauptung eingebracht — das gehört gar nicht zu den Zielkernpunkten
+  // dieses Unterkapitels).
+  const targetLabels = (q.targetKernpunkteIds || []).map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
   const prompt = `Du spielst die Rolle eines Questgebers (Laie ohne Fachwissen) in einer Lern-App.
 Dein Fall: ${q.scenario}
+Worum es in deinem Anliegen fachlich eigentlich geht (nur Kontext für dich, dem Spieler nicht als Liste zeigen): ${JSON.stringify(targetLabels)}
 Du kennst NUR deine eigene Alltagsperspektive, KEIN Fachwissen. Antworte kurz (1-3 Sätze), in Alltagssprache, aus der Ich-Perspektive des NPCs.
+WICHTIG: Bleib bei deinem ursprünglichen Anliegen und den oben genannten Themen — führe KEINE neuen Sachfragen, Praxistipps oder Behauptungen ein, die darüber hinausgehen (auch nicht als eigene Vermutung/Alltagswissen). Du bist der Laie, der fragt und zuhört — nicht der, der erklärt, Zusammenhänge herstellt oder neue Fakten behauptet.
 Bisheriger Chat-Verlauf: ${JSON.stringify(q.npcChat.slice(-6))}
 Neue Nachricht vom Spieler: "${text}"
 Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen drumherum.`;
