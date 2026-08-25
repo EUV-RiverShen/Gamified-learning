@@ -729,19 +729,23 @@ function modulePaceInfo(m) {
   }
   const totalDays = Math.max(1, daysBetween(m.startDate, m.targetDate));
   const elapsed = Math.min(totalDays, Math.max(0, daysBetween(m.startDate, todayIso())));
-  const expectedLevel = Math.min(maxLevel, (elapsed / totalDays) * maxLevel);
-  const diff = level - expectedLevel;
+  const timeFrac = elapsed / totalDays;
 
-  // Rückstand/Vorsprung: Level-Diff → Kernpunkte (feinere Einheit) → ca. Quests
-  // (greifbare Einheit). "ca.", weil die Umrechnung ein gemessener/geschätzter
-  // Schnitt ist, keine exakte Zahl.
-  const kpPerLevel = maxLevel > 0 ? kp.total / maxLevel : 0;
-  const kpDiff = diff * kpPerLevel;
+  // Rückstand/Vorsprung DIREKT in Kernpunkten berechnen (erwarteter Stand heute
+  // = timeFrac × kp.total), NICHT über die gröbere Level-Einheit (= komplett
+  // abgeschlossene Unterkapitel). Unterkapitel sind unterschiedlich groß (mal 5,
+  // mal 60+ Kernpunkte) — ein einzelnes großes Unterkapitel fertigzustellen würde
+  // über Level→Kernpunkte-Umrechnung (mit dem MODUL-DURCHSCHNITT pro Unterkapitel)
+  // einen unrealistisch großen Sprung im Rückstand erzeugen, statt den tatsächlich
+  // erledigten Kernpunkten zu entsprechen. So bleibt's konsistent mit dem Tagesziel
+  // weiter unten, das ebenfalls direkt auf kp.remaining basiert.
+  const expectedKp = timeFrac * kp.total;
+  const kpDiff = kp.done - expectedKp; // positiv = voraus, negativ = Rückstand
   const questDiff = Math.round(kpDiff / avgKp);
 
   let status = 'ontrack', text = 'im Plan';
-  if (diff >= 1 && questDiff >= 1) { status = 'ahead'; text = `ca. ${questDiff} ${questWord(questDiff)} voraus`; }
-  else if (diff <= -1 && questDiff <= -1) { status = 'behind'; text = `ca. ${Math.abs(questDiff)} ${questWord(questDiff)} im Rückstand`; }
+  if (questDiff >= 1) { status = 'ahead'; text = `ca. ${questDiff} ${questWord(questDiff)} voraus`; }
+  else if (questDiff <= -1) { status = 'behind'; text = `ca. ${Math.abs(questDiff)} ${questWord(questDiff)} im Rückstand`; }
   const daysLeft = daysBetween(todayIso(), m.targetDate);
 
   // Tagesziel: Restarbeit (in Kernpunkten, präzise) gleichmäßig auf die Resttage
@@ -752,7 +756,7 @@ function modulePaceInfo(m) {
 
   return {
     pct: Math.round((level/maxLevel)*100),
-    goalPct: Math.round((expectedLevel/maxLevel)*100),
+    goalPct: Math.round(timeFrac * 100),
     status, text, daysLeft, dailyGoalQuests, kp, avgKp
   };
 }
@@ -1473,12 +1477,14 @@ function handleQuestSubmitClick() {
     qmSubmitArmed = false;
     qmQuestError = 'Du hast noch eine ungesendete Nachricht im Chat-Feld — schick sie zuerst ab (oder lösch sie), bevor du die Antwort einreichst.';
     renderQuestModal();
+    focusChatInput();
     return;
   }
   if (!qmSubmitArmed) {
     qmSubmitArmed = true;
     qmQuestError = null;
     renderQuestModal();
+    focusChatInput();
     return;
   }
   qmSubmitArmed = false;
@@ -1501,6 +1507,7 @@ async function submitQuestAnswer() {
 
   qmSubmittingAnswer = true;
   renderQuestModal();
+  focusChatInput();
 
   const targetIds = q.targetKernpunkteIds || [];
   const targetLabels = targetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
@@ -1524,6 +1531,7 @@ pass=true nur wenn ALLE Zielkernpunkte irgendwo im Gesprächsverlauf inhaltlich 
     qmSubmittingAnswer = false;
     qmQuestError = 'Bewertung konnte nicht geladen werden (' + (e.message || e) + '). Versuch es nochmal.';
     renderQuestModal();
+    focusChatInput();
     return;
   }
   qmQuestError = null;
