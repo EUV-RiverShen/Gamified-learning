@@ -681,90 +681,76 @@ function figureSvg(g) {
   </svg>`;
 }
 
-// Kernpunkte sind die feinste vorhandene Fortschritts-Einheit (feiner als "Level" =
-// abgeschlossene Unterkapitel) — intern die Basis für Tagesziel & Rückstands-Rechnung.
-// Für die Anzeige werden sie aber in "Quests" umgerechnet (siehe avgKpPerQuest/
-// modulePaceInfo) — Kernpunkte sind für Spieler nicht greifbar, Quests schon
-// (das ist die konkrete Aktion: Questgeber ansprechen, Antwort einreichen, XP).
-function moduleKernpunkteStats(m) {
+// Für Rückstand/Tagesziel wird direkt in QUESTGEBERN gezählt (nicht in Kernpunkten
+// umgerechnet) — jeder Questgeber ist ein fester, schon beim Upload feststehender
+// Cluster (qg.kernpunkteIds), und praktisch eine Quest. Das ist eine ECHTE Zählung,
+// kein geschätzter Durchschnitt: eine frühere Version hat die Restarbeit (Kernpunkte)
+// durch einen aus der bisherigen Quest-Historie GESCHÄTZTEN Schnitt geteilt — bei
+// wenigen, ungleich großen Clustern (manche 3, manche 35 Kernpunkte) ist so ein
+// Schnitt leicht verzerrt und stimmt nicht mit der tatsächlichen Anzahl noch offener
+// Questgeber überein.
+//
+// Ein Questgeber gilt als "erledigt", wenn alle Kernpunkte SEINES eigenen Clusters
+// abgedeckt sind — unabhängig davon, ob das über seine eigene Quest passierte oder
+// (durch die Pool-/Wiederholungs-Logik in generateAndSetQuest) über eine andere.
+function moduleQuestgeberStats(m) {
   let total = 0, done = 0;
   for (const ch of m.chapters) {
     for (const sn of ch.subnodes) {
-      for (const kp of sn.kernpunkte) {
+      for (const qg of sn.questgeber) {
         total++;
-        if (kp.covered) done++;
+        const allCovered = qg.kernpunkteIds.every(id => {
+          const kp = sn.kernpunkte.find(k => k.id === id);
+          return kp && kp.covered;
+        });
+        if (allCovered) done++;
       }
     }
   }
   return { total, done, remaining: total - done };
 }
-
-// Wie viele Kernpunkte deckt eine Quest im Schnitt ab? Erst aus der eigenen
-// Log-Historie dieses Moduls schätzen (echtes, gemessenes Verhalten für genau
-// diesen Studienbrief), sonst aus der Historie aller Module, sonst ein fester
-// Richtwert (aus dem eigenen Generierungs-Prompt: "ca. 3-6 Kernpunkte pro
-// Cluster" — Questgeber-Cluster ≈ eine Quest).
-const DEFAULT_KP_PER_QUEST = 4;
-function avgKpPerQuest(m) {
-  const ownEntries = (m.log || []).filter(e => e.kpCount > 0);
-  if (ownEntries.length > 0) return ownEntries.reduce((a,e) => a + e.kpCount, 0) / ownEntries.length;
-  const allEntries = modules.flatMap(mm => (mm.log || []).filter(e => e.kpCount > 0));
-  if (allEntries.length > 0) return allEntries.reduce((a,e) => a + e.kpCount, 0) / allEntries.length;
-  return DEFAULT_KP_PER_QUEST;
-}
 function questWord(n) { return Math.abs(n) === 1 ? 'Quest' : 'Quests'; }
 
-// Fortschritts-Ziel Pace: vergleicht erreichtes Modul-Level mit dem, was laut Zieldatum
-// erwartet wäre — UND liefert konkrete Zahlen (statt nur eines Status-Labels): ca. wie
-// viele Quests im Rückstand, und ein Tagesziel in Quests, das sich mit dem Rückstand
-// automatisch neu berechnet (klassische Restarbeit/Resttage-Rechnung, nur eben in der
-// Einheit, die man als Spieler tatsächlich erlebt).
+// Fortschritts-Ziel Pace: vergleicht erreichten Questgeber-Stand mit dem, was laut
+// Zieldatum erwartet wäre — liefert konkrete Zahlen (statt nur eines Status-Labels):
+// wie viele Quests im Rückstand, und ein Tagesziel, das sich mit dem Rückstand
+// automatisch neu berechnet (klassische Restarbeit/Resttage-Rechnung).
 function modulePaceInfo(m) {
   const maxLevel = moduleMaxLevel(m);
   const level = computeModuleLevel(m);
-  const kp = moduleKernpunkteStats(m);
-  const avgKp = avgKpPerQuest(m);
+  const qgStats = moduleQuestgeberStats(m);
   if (!m.targetDate || maxLevel === 0) {
-    return { pct: maxLevel ? Math.round((level/maxLevel)*100) : 0, status: null, text: '', kp, avgKp };
+    return { pct: maxLevel ? Math.round((level/maxLevel)*100) : 0, status: null, text: '', qgStats };
   }
   const totalDays = Math.max(1, daysBetween(m.startDate, m.targetDate));
   const elapsed = Math.min(totalDays, Math.max(0, daysBetween(m.startDate, todayIso())));
   const timeFrac = elapsed / totalDays;
 
-  // Rückstand/Vorsprung DIREKT in Kernpunkten berechnen (erwarteter Stand heute
-  // = timeFrac × kp.total), NICHT über die gröbere Level-Einheit (= komplett
-  // abgeschlossene Unterkapitel). Unterkapitel sind unterschiedlich groß (mal 5,
-  // mal 60+ Kernpunkte) — ein einzelnes großes Unterkapitel fertigzustellen würde
-  // über Level→Kernpunkte-Umrechnung (mit dem MODUL-DURCHSCHNITT pro Unterkapitel)
-  // einen unrealistisch großen Sprung im Rückstand erzeugen, statt den tatsächlich
-  // erledigten Kernpunkten zu entsprechen. So bleibt's konsistent mit dem Tagesziel
-  // weiter unten, das ebenfalls direkt auf kp.remaining basiert.
-  const expectedKp = timeFrac * kp.total;
-  const kpDiff = kp.done - expectedKp; // positiv = voraus, negativ = Rückstand
-  const questDiff = Math.round(kpDiff / avgKp);
+  // Erwarteter Questgeber-Stand heute = timeFrac × Gesamtzahl Questgeber. Direkt in
+  // dieser Einheit, nicht über Level oder Kernpunkte-Durchschnitt umgerechnet — siehe
+  // Kommentar oben bei moduleQuestgeberStats.
+  const expectedQg = timeFrac * qgStats.total;
+  const questDiff = Math.round(qgStats.done - expectedQg); // positiv = voraus, negativ = Rückstand
 
   let status = 'ontrack', text = 'im Plan';
-  if (questDiff >= 1) { status = 'ahead'; text = `ca. ${questDiff} ${questWord(questDiff)} voraus`; }
-  else if (questDiff <= -1) { status = 'behind'; text = `ca. ${Math.abs(questDiff)} ${questWord(questDiff)} im Rückstand`; }
+  if (questDiff >= 1) { status = 'ahead'; text = `${questDiff} ${questWord(questDiff)} voraus`; }
+  else if (questDiff <= -1) { status = 'behind'; text = `${Math.abs(questDiff)} ${questWord(questDiff)} im Rückstand`; }
   const daysLeft = daysBetween(todayIso(), m.targetDate);
 
-  // Tagesziel: Restarbeit (in Kernpunkten, präzise) gleichmäßig auf die Resttage
-  // verteilt, dann in ca. Quests umgerechnet. Rechnet sich jeden Tag neu — wer im
-  // Rückstand ist, kriegt automatisch ein höheres Tagesziel für morgen.
-  const dailyGoalKp = daysLeft > 0 ? Math.ceil(kp.remaining / daysLeft) : kp.remaining;
-  const dailyGoalQuests = kp.remaining > 0 ? Math.max(1, Math.round(dailyGoalKp / avgKp)) : 0;
+  // Tagesziel: offene Questgeber gleichmäßig auf die Resttage verteilt. Rechnet sich
+  // jeden Tag neu — wer im Rückstand ist, kriegt automatisch ein höheres Tagesziel.
+  const dailyGoalQuests = daysLeft > 0 ? Math.ceil(qgStats.remaining / daysLeft) : qgStats.remaining;
 
   return {
     pct: Math.round((level/maxLevel)*100),
     goalPct: Math.round(timeFrac * 100),
-    status, text, daysLeft, dailyGoalQuests, kp, avgKp
+    status, text, daysLeft, dailyGoalQuests, qgStats
   };
 }
 
-// Wie viele Quests wurden HEUTE tatsächlich abgeschlossen? Das ist eine exakte
-// Zahl (direkt aus dem Log gezählt, keine Umrechnung/Schätzung nötig) — im
-// Gegensatz zum Tagesziel, das zwangsläufig eine Schätzung bleibt (siehe
-// avgKpPerQuest), weiß die App genau, wie viele Quests wirklich liefen.
+// Wie viele Quests wurden HEUTE tatsächlich abgeschlossen? Direkt aus dem Log
+// gezählt — Vergleichswert zum Tagesziel (moduleQuestgeberStats), beide jetzt in
+// derselben, exakt gezählten Einheit statt eines geschätzten Durchschnitts.
 function moduleDoneTodayQuests(m) {
   const today = todayIso();
   return (m.log || []).filter(e => e.date === today).length;
@@ -782,7 +768,7 @@ function computeDailyStats() {
     for (const entry of (m.log || [])) activityDates.add(entry.date);
     doneToday += moduleDoneTodayQuests(m);
     const pace = modulePaceInfo(m);
-    if (pace.dailyGoalQuests != null && pace.kp.remaining > 0) {
+    if (pace.dailyGoalQuests != null && pace.qgStats && pace.qgStats.remaining > 0) {
       dailyGoalTotal += pace.dailyGoalQuests;
       hasGoals = true;
     }
@@ -812,7 +798,7 @@ function renderDailyWidget() {
       </div>
       ${d.hasGoals ? `
         <div style="text-align:right;">
-          <div style="font-weight:700;font-size:14px;">${d.doneToday} / ca. ${d.dailyGoalTotal} ${questWord(d.dailyGoalTotal)}</div>
+          <div style="font-weight:700;font-size:14px;">${d.doneToday} / ${d.dailyGoalTotal} ${questWord(d.dailyGoalTotal)}</div>
           <div style="font-size:11.5px;color:var(--text-dim);">heute, über alle Module</div>
         </div>
       ` : ''}
@@ -838,7 +824,7 @@ function renderModuleTile(m) {
       </div>
       <div class="m-meta"><span>Level ${level}/${maxLevel}</span>${pace.daysLeft != null ? `<span>${pace.daysLeft >= 0 ? pace.daysLeft + ' Tage übrig' : 'Ziel überschritten'}</span>` : ''}</div>
       ${pace.status ? `<div class="m-pace ${pace.status}">${pace.status === 'ahead' ? '↑' : pace.status === 'behind' ? '↓' : '→'} ${pace.text}</div>` : ''}
-      ${pace.dailyGoalQuests != null && pace.kp.remaining > 0 ? `<div class="m-daily-goal">🎯 Tagesziel: ca. ${pace.dailyGoalQuests} ${questWord(pace.dailyGoalQuests)} ${doneTodayQuests > 0 ? `(heute schon ${doneTodayQuests})` : ''}</div>` : ''}
+      ${pace.dailyGoalQuests != null && pace.qgStats.remaining > 0 ? `<div class="m-daily-goal">🎯 Tagesziel: ${pace.dailyGoalQuests} ${questWord(pace.dailyGoalQuests)} ${doneTodayQuests > 0 ? `(heute schon ${doneTodayQuests})` : ''}</div>` : ''}
       ${hasFailedChapter ? `<div style="position:absolute;bottom:10px;right:10px;color:var(--red);font-size:14px;">⚠</div>` : ''}
     </div>
   `;
@@ -1031,7 +1017,7 @@ function renderSkilltree() {
     ${pace.status ? `
       <div style="display:flex;justify-content:space-between;align-items:center;margin:-6px 0 12px;font-size:11.5px;">
         <span class="m-pace ${pace.status}" style="margin:0;">${pace.status === 'ahead' ? '↑' : pace.status === 'behind' ? '↓' : '→'} ${pace.text}</span>
-        ${pace.dailyGoalQuests != null && pace.kp.remaining > 0 ? `<span style="color:var(--text-dim);">🎯 Tagesziel: ca. ${pace.dailyGoalQuests} ${questWord(pace.dailyGoalQuests)}${moduleDoneTodayQuests(m) > 0 ? ` (heute ${moduleDoneTodayQuests(m)})` : ''}</span>` : ''}
+        ${pace.dailyGoalQuests != null && pace.qgStats.remaining > 0 ? `<span style="color:var(--text-dim);">🎯 Tagesziel: ${pace.dailyGoalQuests} ${questWord(pace.dailyGoalQuests)}${moduleDoneTodayQuests(m) > 0 ? ` (heute ${moduleDoneTodayQuests(m)})` : ''}</span>` : ''}
       </div>
     ` : ''}
     <div class="qm-tabs" style="margin-bottom:14px;border-radius:var(--radius-sm);border:0.5px solid var(--border);overflow:hidden;">
