@@ -1464,7 +1464,7 @@ Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen d
     q.npcChat.push({ role: 'npc', text: reply.trim() });
   } catch (e) {
     console.error('NPC-Chat-Antwort fehlgeschlagen:', e);
-    q.npcChat.push({ role: 'npc', text: '(Antwort konnte nicht geladen werden — versuch es nochmal.)' });
+    q.npcChat.push({ role: 'npc', text: '(Antwort konnte nicht geladen werden — ' + (e.message || e) + '. Versuch es nochmal.)' });
   }
   await saveState();
   renderQuestModal(); focusChatInput();
@@ -1999,6 +1999,7 @@ WICHTIGE REGEL — Quest-Spec:
 4. Verrate die Bedeutung/Übersetzung eines Zielkernpunkts NICHT versehentlich in der Nachricht selbst — z.B. nicht "ich weiß nicht, ob das vorne oder hinten ist" schreiben, wenn "anterior" (=vorne) oder "posterior" (=hinten) ein Zielkernpunkt ist. Gerade bei anatomischen Fachbegriffen ist die deutsche Übersetzung oft ein ganz normales Alltagswort (vorne, hinten, oben, unten, außen, innen, links, rechts...) — beim natürlichen Formulieren der Alltagssprache des NPCs rutscht so leicht unabsichtlich die Antwort selbst mit rein. Der Spieler soll die Bedeutung erklären müssen, nicht sie vorgelesen bekommen.
 5. Der Studienbrief-Inhalt selbst bleibt strikt gebunden: erfinde KEINE zusätzlichen Fakten, Mechanismen oder Begründungen zum Zielkernpunkt, die die untenstehenden Auszüge nicht hergeben und die sich auch nicht daraus herleiten lassen. Das gilt ausdrücklich auch für Verknüpfungen ZWISCHEN zwei getrennt genannten Fakten (auch aus verschiedenen Unterkapiteln): nur weil zwei Aussagen thematisch zusammenpassen, heißt das nicht, dass die eine Voraussetzung, Ursache oder Bedingung für die andere ist — erfinde so einen Abhängigkeits-/Kausalzusammenhang nicht.
    Die konkrete SITUATION drumherum darf dagegen auf echtem, korrektem Alltags-/Fachwissen aufbauen, das NICHT in den Auszügen steht (z.B. konkrete Reha-Übungen, Trainingsdetails, Zahlen einer erfundenen Situation) — das betrifft nur das Szenario, nicht den Studienbrief-Inhalt selbst. Bleib dabei bei gut etabliertem, unumstrittenem Fachwissen, nichts Obskures/Spezifisches, das falsch sein könnte. Im Zweifel beim Studienbrief-Inhalt selbst: lieber näher an den Auszügen bleiben als eine spannendere, aber unbelegte Behauptung aufstellen.
+   Vermeide dabei jede Rahmung über Waffen/Kampfstoffe/Vergiftung-als-Angriff (Biowaffen, Gifte auf Pfeilspitzen, Anschlagsszenarien etc.), selbst wenn der zugrundeliegende Fachinhalt legitim ist (z.B. Toxikologie/Pharmakologie/Nervenleitung) — solche Rahmungen lösen unnötig Sicherheits-Filter aus und sind ohnehin nie nötig. Bleib stattdessen bei alltäglichen, klinischen oder sportlichen Situationen (Unfall, Erkrankung, Nebenwirkung, Trainingsreiz, Verletzung) als Aufhänger für denselben Fachinhalt.
 ${prevName ? `6. Der Spieler hat die letzte Antwort bei "${prevName}" NICHT bestanden — erfinde eine KOMPLETT NEUE Person mit neuem, anderem Vornamen (nicht "${prevName}") und einem neuen, andersartigen persönlichen Problem/Kontext (anderer Alltag, andere Situation) — aber es geht inhaltlich weiterhin um dieselben Zielkernpunkte.` : ''}
 
 Kontext: diese Quest kombiniert Kernpunkte aus folgenden Unterkapiteln: ${involvedSubnodes.map(sn=>sn.title).join(', ')}.
