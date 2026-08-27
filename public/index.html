@@ -204,7 +204,6 @@ input, select, textarea{ font-family: inherit; }
 .qm-tab{ flex:1; text-align:center; padding:11px 4px; min-height:44px; display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; color:var(--text-dim); border-bottom: 2px solid transparent; }
 .qm-tab.active{ color:var(--text); border-bottom-color: var(--blue); }
 .npc-hook{ background: var(--card-2); border-radius: var(--radius-sm); padding:14px; font-size:14px; line-height:1.5; border-left: 3px solid var(--orange); }
-.scenario-box{ font-size:14px; line-height:1.6; white-space:pre-wrap; margin-bottom:14px;}
 .npc-chat{ display:flex; flex-direction:column; gap:8px; margin: 12px 0;}
 .npc-msg{ max-width:85%; padding:9px 12px; border-radius:12px; font-size:13.5px; line-height:1.4;}
 .npc-msg.npc{ background: var(--card-2); align-self:flex-start; border-bottom-left-radius:3px;}
@@ -1241,6 +1240,8 @@ let qmQuestFeedback = null; // { pass, text } | null — Ergebnis einer NICHT be
 let qmQuestError = null; // String | null — technischer Fehler bei der Bewertung selbst (NPC bleibt derselbe)
 let qmSubmittingAnswer = false;
 let qmSubmitArmed = false; // true = erster Klick auf "Antwort einreichen" schon erfolgt, zweiter bestätigt
+let qmProfSending = false;
+let qmProfError = null;
 
 async function openQuestModal(questgeberId) {
   const loc = findQuestgeber(questgeberId);
@@ -1253,6 +1254,8 @@ async function openQuestModal(questgeberId) {
   qmQuestError = null;
   qmSubmittingAnswer = false;
   qmSubmitArmed = false;
+  qmProfSending = false;
+  qmProfError = null;
   dismissQuestResult();
   document.getElementById('modal-root').innerHTML = ''; // ggf. Questgeber-Liste schließen
   renderQuestModal();
@@ -1277,15 +1280,15 @@ function renderQuestModal() {
     bodyHtml = renderBossPanel(exercise);
   } else {
     title = qg.name;
-    tabs = [{ id: 'npc', label: '🧙 Questgeber' }, { id: 'map', label: '🗺️ Wissenskarte' }, { id: 'ally', label: '🤝 Verbündeter' }];
+    tabs = [{ id: 'npc', label: '🧙 Questgeber' }, { id: 'map', label: '🗺️ Wissenskarte' }, { id: 'prof', label: '🎓 Professor' }];
     if (qmGenerating) {
       bodyHtml = `<div class="gen-loading"><div class="spinner"></div>Questgeber überlegt sich eine Aufgabe...</div>`;
     } else if (qmActiveTab === 'npc') {
       bodyHtml = renderNpcTab(qg);
     } else if (qmActiveTab === 'map') {
       bodyHtml = renderMapTab(m);
-    } else if (qmActiveTab === 'ally') {
-      bodyHtml = `<div class="coming-soon">🤝<br><br>Verbündeter kommt bald.<br>Später erklärt er dir das ganze Kapitel — vollständig, nichts ausgelassen.</div>`;
+    } else if (qmActiveTab === 'prof') {
+      bodyHtml = renderProfTab(sn);
     }
   }
 
@@ -1323,7 +1326,6 @@ function renderNpcTab(qg) {
       <span class="xp-pill">+${q.xp || 0} XP</span>
       <span class="muster-pill">Muster ${q.muster || '?'} · ${q.durationMin || '?'} min</span>
     </div>
-    <div class="scenario-box">${escapeHtml(q.scenario || '')}</div>
     <div class="npc-chat" id="npc-chat-box">
       ${chat.map(m => `<div class="npc-msg ${m.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('')}
     </div>
@@ -1340,8 +1342,16 @@ function renderNpcTab(qg) {
 }
 
 async function acceptQuest() {
-  currentQuestCtx.questgeber.currentQuest.accepted = true;
+  const q = currentQuestCtx.questgeber.currentQuest;
+  q.accepted = true;
   qmQuestFeedback = null;
+  // Startet direkt im Dialog statt mit einer Textwand: die npcHook-Zeile (die
+  // vorher nur als Teaser vor der Annahme diente) wird die erste Chat-Nachricht.
+  // Die eigentlichen Details des Anliegens (Zitate etc., in q.scenario) kommen
+  // erst häppchenweise über sendNpcChat() raus, wenn der Spieler nachfragt —
+  // nicht alle auf einmal.
+  if (!q.npcChat) q.npcChat = [];
+  if (!q.npcChat.length && q.npcHook) q.npcChat.push({ role: 'npc', text: q.npcHook });
   await saveState();
   renderQuestModal();
   renderQuestPanel();
@@ -1372,6 +1382,7 @@ Dein Fall: ${q.scenario}
 Worum es in deinem Anliegen fachlich eigentlich geht (nur Kontext für dich, dem Spieler nicht als Liste zeigen): ${JSON.stringify(targetLabels)}
 Du kennst NUR deine eigene Alltagsperspektive, KEIN Fachwissen. Antworte kurz (1-3 Sätze), in Alltagssprache, aus der Ich-Perspektive des NPCs.
 WICHTIG: Bleib bei deinem ursprünglichen Anliegen und den oben genannten Themen — führe KEINE neuen Sachfragen, Praxistipps oder Behauptungen ein, die darüber hinausgehen (auch nicht als eigene Vermutung/Alltagswissen). Du bist der Laie, der fragt und zuhört — nicht der, der erklärt, Zusammenhänge herstellt oder neue Fakten behauptet.
+WICHTIG: Das ist ein echtes Gespräch, kein Rededump — dein Fall enthält evtl. mehrere Teile/Zitate/Fragen, aber verrate NICHT alles auf einmal. Geh nur auf das ein, was der Spieler gerade gefragt/gesagt hat, und bring pro Nachricht höchstens EINEN neuen Teil deines Anliegens ins Spiel (z.B. ein Zitat oder eine Teilfrage) — die restlichen Teile kommen erst in späteren Nachrichten dran, so wie sich das in einem echten Gespräch nach und nach ergeben würde.
 Bisheriger Chat-Verlauf: ${JSON.stringify(q.npcChat.slice(-6))}
 Neue Nachricht vom Spieler: "${text}"
 Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen drumherum.`;
@@ -1395,6 +1406,81 @@ function focusChatInput() {
     const body = document.querySelector('#modal-root .modal-body');
     if (body) body.scrollTop = body.scrollHeight;
   }, 0);
+}
+
+/* =========================================================================
+   PROFESSOR-TAB: freier Chat mit Zugriff auf den GESAMTEN Studienbrief-Text
+   (m.pdfText), nicht nur den Auszug des aktuellen Unterkapitels — anders als
+   der Questgeber-Chat (der bewusst eng geführt ist, siehe sendNpcChat) soll
+   der Professor alles erklären/beantworten können, was im Studienbrief
+   steht, orientiert sich aber standardmäßig an der aktuellen Position im
+   Skilltree statt unaufgefordert vorzugreifen. Chat-Verlauf lebt pro
+   Unterkapitel (sn.profChat), nicht pro Questgeber — ein Professor pro Thema,
+   unabhängig davon über welchen Questgeber man reinkommt.
+========================================================================= */
+function renderProfTab(sn) {
+  const chat = sn.profChat || [];
+  return `
+    <div class="npc-chat" id="prof-chat-box">
+      ${chat.length ? chat.map(m => `<div class="npc-msg ${m.role === 'prof' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('') : `<div class="npc-msg npc">Hey, ich bin dein Professor für "${escapeHtml(sn.title)}" — frag mich einfach, was du wissen willst, oder wo's gerade hakt. Ich kenn den ganzen Studienbrief, nicht nur dieses Unterkapitel.</div>`}
+    </div>
+    <div class="chat-input-row">
+      <input type="text" id="prof-chat-input" placeholder="Frag den Professor..." onkeydown="if(event.key==='Enter') sendProfChat()" ${qmProfSending ? 'disabled' : ''}>
+      <button class="btn btn-sm" onclick="sendProfChat()" ${qmProfSending ? 'disabled' : ''}>${qmProfSending ? '...' : 'Senden'}</button>
+    </div>
+    ${qmProfError ? `<div class="boss-feedback fail">${escapeHtml(qmProfError)}</div>` : ''}
+  `;
+}
+
+async function sendProfChat() {
+  const input = document.getElementById('prof-chat-input');
+  const text = input.value.trim();
+  if (!text || qmProfSending) return;
+  input.value = '';
+  const { module: m, chapter: ch, subnode: sn } = currentQuestCtx;
+  if (!sn.profChat) sn.profChat = [];
+  sn.profChat.push({ role: 'me', text });
+  await saveState();
+  renderQuestModal(); focusChatInput();
+
+  qmProfSending = true;
+  qmProfError = null;
+  renderQuestModal();
+
+  const priorTitles = flatSubnodes(m).filter(x => x.subnode.globalIndex < sn.globalIndex).map(x => x.subnode.title);
+  const coveredHere = sn.kernpunkte.filter(k => k.covered).map(k => k.label);
+  const openHere = sn.kernpunkte.filter(k => !k.covered).map(k => k.label);
+
+  const prompt = `Du bist ein geduldiger, freundlicher Fach-Professor in einer Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement). Im Systemkontext hast du den GESAMTEN Studienbrief dieses Moduls als Hintergrundwissen — nutze NUR den, erfinde keine Fakten dazu.
+
+Wie du erklärst: ein echtes GESPRÄCH, kein Vortrag — kurze, verdauliche Antworten (in der Regel 2-6 Sätze, nur bei echtem Bedarf länger), keine Textwände. Frag bei Bedarf selbst nach, was genau unklar ist, statt pauschal alles runterzurattern. Beantworte auch Gegenfragen/Verständnisfragen direkt und ehrlich.
+
+Aktuelle Position des Studierenden: Unterkapitel "${sn.title}" aus Kapitel "${ch.title}".
+Bereits behandelte Begriffe in diesem Unterkapitel: ${coveredHere.length ? coveredHere.join(', ') : '(noch keine)'}
+Noch offene Begriffe in diesem Unterkapitel: ${openHere.length ? openHere.join(', ') : '(keine)'}
+Bereits abgeschlossene frühere Unterkapitel: ${priorTitles.length ? priorTitles.join(', ') : '(keine)'}
+Orientiere dich standardmäßig an dieser Position. Fragt der Studierende explizit nach späterem Stoff (noch nicht erreichten Unterkapiteln), antworte trotzdem ehrlich aus dem vollständigen Studienbrief — blockiere die Frage NICHT — weise aber kurz beiläufig darauf hin, dass das eigentlich später drankommt (z.B. "Das kommt zwar erst später dran, aber kurz gesagt: ...").
+
+Bisheriger Chat-Verlauf mit dir: ${JSON.stringify(sn.profChat.slice(-12))}
+Neue Nachricht vom Studierenden: "${text}"
+
+Antworte NUR mit deinem Antworttext (kein JSON, keine Anführungszeichen drumherum).`;
+
+  try {
+    // Ohne hochgeladenen PDF-Text (z.B. Module aus dem Text-Import-Flow statt
+    // PDF-Upload) auf die vorhandenen Unterkapitel-Auszüge ausweichen, statt
+    // dem Professor komplett ohne Wissensgrundlage dazustehen.
+    const rawText = m.pdfText || flatSubnodes(m).map(x => x.subnode.sourceExcerpt).filter(Boolean).join('\n\n');
+    const bookContext = `Studienbrief-Text dieses Moduls als Hintergrundwissen:\n\n${rawText.slice(0, 400000)}`;
+    const reply = await callClaude(prompt, 700, bookContext);
+    sn.profChat.push({ role: 'prof', text: reply.trim() });
+  } catch (e) {
+    console.error('Professor-Chat fehlgeschlagen:', e);
+    qmProfError = 'Antwort konnte nicht geladen werden (' + (e.message || e) + '). Versuch es nochmal.';
+  }
+  qmProfSending = false;
+  await saveState();
+  renderQuestModal(); focusChatInput();
 }
 
 function renderMapTab(m) {
@@ -1760,8 +1846,8 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   "title": "Kurzer Titel",
   "xp": 15,
   "muster": "A",
-  "npcHook": "Kurze persönliche Anfrage vor Annahme (1-2 Sätze), direkt an dich gerichtet, z.B. 'Kannst du mir kurz helfen? Ich hab grad was komisches erlebt beim Training.'",
-  "nachricht": "Die VOLLSTÄNDIGE Nachricht/Erzählung des NPCs an dich — ein durchgehender Text in seiner Stimme, keine Aufgabenliste, endet mit einer echten offenen Bitte/Frage.",
+  "npcHook": "Die ERSTE Chat-Nachricht des NPCs an dich — kurz (1-2 Sätze), mit Begrüßung, deutet das Thema vage an OHNE Details/Zitate zu verraten (die kommen erst später im Chat, wenn du nachfragst). Bsp: 'Moin Amon, mein Physio hat mir irgendwelche Übungen gegeben, ich check aber null was der von mir will, irgendwas mit Ebenen oderso.'",
+  "nachricht": "Der VOLLSTÄNDIGE Hintergrund/Fall des NPCs (Zitate, Details, alles was für die Zielkernpunkte gebraucht wird) — dient NUR als dein interner Wissensstand für den späteren Chat, wird dem Spieler NIE als ganzer Text gezeigt, sondern von dir häppchenweise im Dialog preisgegeben. Trotzdem in derselben Stimme/Perspektive des NPCs schreiben, keine Aufgabenliste.",
   "durationMin": 15
 }`;
 
@@ -1785,10 +1871,11 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
     await saveState();
   } catch (e) {
     console.error(e);
+    const failMsg = 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.';
     qg.currentQuest = {
       id: uid('q'), title: 'Generierung fehlgeschlagen', xp: 0, stat: ch.stat, durationMin: 0, muster: 'D',
-      npcHook: 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.',
-      scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: []
+      npcHook: failMsg,
+      scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: [{ role: 'npc', text: failMsg }]
     };
   }
   qmGenerating = false;
@@ -1851,6 +1938,7 @@ function buildNormalizedSubnode(snRaw, chId, si, globalIndex) {
     sourceExcerpt: snRaw.excerpt || null,
     kernpunkte,
     questgeber,
+    profChat: [], // Chat-Verlauf mit dem Professor (freie Fragen zum ganzen Studienbrief, siehe renderProfTab)
     exercise: snRaw.exercise ? {
       id: snId + '.boss',
       title: snRaw.exercise.title || ('Kapitel-Boss'),
