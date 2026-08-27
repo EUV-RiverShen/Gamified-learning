@@ -204,7 +204,6 @@ input, select, textarea{ font-family: inherit; }
 .qm-tab{ flex:1; text-align:center; padding:11px 4px; min-height:44px; display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; color:var(--text-dim); border-bottom: 2px solid transparent; }
 .qm-tab.active{ color:var(--text); border-bottom-color: var(--blue); }
 .npc-hook{ background: var(--card-2); border-radius: var(--radius-sm); padding:14px; font-size:14px; line-height:1.5; border-left: 3px solid var(--orange); }
-.scenario-box{ font-size:14px; line-height:1.6; white-space:pre-wrap; margin-bottom:14px;}
 .npc-chat{ display:flex; flex-direction:column; gap:8px; margin: 12px 0;}
 .npc-msg{ max-width:85%; padding:9px 12px; border-radius:12px; font-size:13.5px; line-height:1.4;}
 .npc-msg.npc{ background: var(--card-2); align-self:flex-start; border-bottom-left-radius:3px;}
@@ -1323,7 +1322,6 @@ function renderNpcTab(qg) {
       <span class="xp-pill">+${q.xp || 0} XP</span>
       <span class="muster-pill">Muster ${q.muster || '?'} · ${q.durationMin || '?'} min</span>
     </div>
-    <div class="scenario-box">${escapeHtml(q.scenario || '')}</div>
     <div class="npc-chat" id="npc-chat-box">
       ${chat.map(m => `<div class="npc-msg ${m.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('')}
     </div>
@@ -1340,8 +1338,16 @@ function renderNpcTab(qg) {
 }
 
 async function acceptQuest() {
-  currentQuestCtx.questgeber.currentQuest.accepted = true;
+  const q = currentQuestCtx.questgeber.currentQuest;
+  q.accepted = true;
   qmQuestFeedback = null;
+  // Startet direkt im Dialog statt mit einer Textwand: die npcHook-Zeile (die
+  // vorher nur als Teaser vor der Annahme diente) wird die erste Chat-Nachricht.
+  // Die eigentlichen Details des Anliegens (Zitate etc., in q.scenario) kommen
+  // erst häppchenweise über sendNpcChat() raus, wenn der Spieler nachfragt —
+  // nicht alle auf einmal.
+  if (!q.npcChat) q.npcChat = [];
+  if (!q.npcChat.length && q.npcHook) q.npcChat.push({ role: 'npc', text: q.npcHook });
   await saveState();
   renderQuestModal();
   renderQuestPanel();
@@ -1372,6 +1378,7 @@ Dein Fall: ${q.scenario}
 Worum es in deinem Anliegen fachlich eigentlich geht (nur Kontext für dich, dem Spieler nicht als Liste zeigen): ${JSON.stringify(targetLabels)}
 Du kennst NUR deine eigene Alltagsperspektive, KEIN Fachwissen. Antworte kurz (1-3 Sätze), in Alltagssprache, aus der Ich-Perspektive des NPCs.
 WICHTIG: Bleib bei deinem ursprünglichen Anliegen und den oben genannten Themen — führe KEINE neuen Sachfragen, Praxistipps oder Behauptungen ein, die darüber hinausgehen (auch nicht als eigene Vermutung/Alltagswissen). Du bist der Laie, der fragt und zuhört — nicht der, der erklärt, Zusammenhänge herstellt oder neue Fakten behauptet.
+WICHTIG: Das ist ein echtes Gespräch, kein Rededump — dein Fall enthält evtl. mehrere Teile/Zitate/Fragen, aber verrate NICHT alles auf einmal. Geh nur auf das ein, was der Spieler gerade gefragt/gesagt hat, und bring pro Nachricht höchstens EINEN neuen Teil deines Anliegens ins Spiel (z.B. ein Zitat oder eine Teilfrage) — die restlichen Teile kommen erst in späteren Nachrichten dran, so wie sich das in einem echten Gespräch nach und nach ergeben würde.
 Bisheriger Chat-Verlauf: ${JSON.stringify(q.npcChat.slice(-6))}
 Neue Nachricht vom Spieler: "${text}"
 Antworte NUR mit dem Antworttext des NPCs, kein JSON, keine Anführungszeichen drumherum.`;
@@ -1760,8 +1767,8 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   "title": "Kurzer Titel",
   "xp": 15,
   "muster": "A",
-  "npcHook": "Kurze persönliche Anfrage vor Annahme (1-2 Sätze), direkt an dich gerichtet, z.B. 'Kannst du mir kurz helfen? Ich hab grad was komisches erlebt beim Training.'",
-  "nachricht": "Die VOLLSTÄNDIGE Nachricht/Erzählung des NPCs an dich — ein durchgehender Text in seiner Stimme, keine Aufgabenliste, endet mit einer echten offenen Bitte/Frage.",
+  "npcHook": "Die ERSTE Chat-Nachricht des NPCs an dich — kurz (1-2 Sätze), mit Begrüßung, deutet das Thema vage an OHNE Details/Zitate zu verraten (die kommen erst später im Chat, wenn du nachfragst). Bsp: 'Moin Amon, mein Physio hat mir irgendwelche Übungen gegeben, ich check aber null was der von mir will, irgendwas mit Ebenen oderso.'",
+  "nachricht": "Der VOLLSTÄNDIGE Hintergrund/Fall des NPCs (Zitate, Details, alles was für die Zielkernpunkte gebraucht wird) — dient NUR als dein interner Wissensstand für den späteren Chat, wird dem Spieler NIE als ganzer Text gezeigt, sondern von dir häppchenweise im Dialog preisgegeben. Trotzdem in derselben Stimme/Perspektive des NPCs schreiben, keine Aufgabenliste.",
   "durationMin": 15
 }`;
 
@@ -1785,10 +1792,11 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
     await saveState();
   } catch (e) {
     console.error(e);
+    const failMsg = 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.';
     qg.currentQuest = {
       id: uid('q'), title: 'Generierung fehlgeschlagen', xp: 0, stat: ch.stat, durationMin: 0, muster: 'D',
-      npcHook: 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.',
-      scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: []
+      npcHook: failMsg,
+      scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: [{ role: 'npc', text: failMsg }]
     };
   }
   qmGenerating = false;
