@@ -82,13 +82,18 @@ input, select, textarea{ font-family: inherit; }
 .stat-row-main:hover{ border-color:#3a3a42; }
 .stat-row-main .name{ font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;}
 .stat-icon{ font-size:15px; width:20px; text-align:center; display:inline-block; flex-shrink:0; }
-.stat-mini-bar{ width:70px; height:5px; border-radius:4px; background:var(--card-2); overflow:hidden; display:block;}
-.stat-mini-bar > div{ height:100%; }
+/* Level-Fortschrittsbalken für Stats/Substats: die Farbe wird pro Skill übergeben
+   (als rgba mit Transparenz, siehe hexToRgba) und legt sich als eingefärbte
+   Füllung über die neutrale Leiste — "levelt sichtbar hoch" statt nur eine Zahl
+   zu zeigen. */
+.stat-lvl-bar{ width:100%; height:6px; border-radius:4px; background:var(--card-2); overflow:hidden; display:block; margin-top:6px; }
+.stat-lvl-bar > div{ height:100%; border-radius:4px; transition: width .4s ease; }
 .substat-wrap{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; padding: 4px 6px 4px 20px; }
 .substat{
-  display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:var(--text-dim);
+  display:flex; flex-direction:column; font-size:12.5px; color:var(--text-dim);
   background: var(--card-2); border-radius:7px; padding:7px 9px;
 }
+.substat-head{ display:flex; align-items:center; justify-content:space-between; }
 
 .section-label{
   font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-faint);
@@ -437,6 +442,13 @@ function daysBetween(a, b) { const da = new Date(a + 'T00:00:00'), db = new Date
 function todayIso() { return isoDate(new Date()); }
 function formatDateShort(iso) { const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit' }); }
 function escapeHtml(s) { if (s == null) return ''; return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Für die Level-Balken der Stats: legt die Skill-Farbe als transparente Füllung
+// über die neutrale Leiste, statt sie deckend zu übermalen.
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0,2), 16), g = parseInt(h.slice(2,4), 16), b = parseInt(h.slice(4,6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 function truncate(s, n) { return s && s.length > n ? s.slice(0, n-1) + '…' : (s||''); }
 
 function getModule(id) { return modules.find(m => m.id === id); }
@@ -632,31 +644,39 @@ function renderOnboarding() {
 async function chooseGender(g) { gender = g; await saveState(); renderCharacter(); }
 
 function renderBodyStatsColumn() {
-  const maxVal = Math.max(50, ...Object.values(bodyXP));
   return Object.keys(BODY_STAT_META).map(key => {
     const meta = BODY_STAT_META[key];
     const val = bodyXP[key] || 0;
-    const pct = Math.min(100, Math.round((val / maxVal) * 100));
+    const lv = xpToLevel(val);
+    const pct = Math.round((lv.xpIntoLevel / lv.xpForThisLevel) * 100);
     return `
-      <div class="stat-row-main" style="cursor:default;">
-        <span class="name"><span class="stat-icon" style="color:${meta.color}">${meta.icon}</span>${meta.label}</span>
-        <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-          <span style="font-size:11px;color:var(--text-dim);">${val} XP</span>
-          <span class="stat-mini-bar"><div style="width:${pct}%;background:${meta.color}"></div></span>
+      <div class="stat-row-main" style="cursor:default;flex-direction:column;align-items:stretch;gap:0;">
+        <span style="display:flex;align-items:center;justify-content:space-between;">
+          <span class="name"><span class="stat-icon" style="color:${meta.color}">${meta.icon}</span>${meta.label}</span>
+          <span style="font-size:12px;font-weight:700;color:${meta.color};">Lvl ${lv.level}</span>
         </span>
+        <div class="stat-lvl-bar"><div style="width:${pct}%;background:${hexToRgba(meta.color, .55)}"></div></div>
+        <span style="font-size:10.5px;color:var(--text-faint);margin-top:3px;align-self:flex-end;">${lv.xpIntoLevel} / ${lv.xpForThisLevel} XP</span>
       </div>
     `;
   }).join('');
 }
 
 function renderIntelligenceStat(sXP, intTotal) {
+  const parentLv = xpToLevel(intTotal);
+  const parentPct = Math.round((parentLv.xpIntoLevel / parentLv.xpForThisLevel) * 100);
   const rows = Object.keys(STATS).map(key => {
     const s = STATS[key];
     const val = sXP[key] || 0;
+    const lv = xpToLevel(val);
+    const pct = Math.round((lv.xpIntoLevel / lv.xpForThisLevel) * 100);
     return `
       <div class="substat">
-        <span style="display:flex;align-items:center;gap:6px;"><span class="stat-icon" style="color:${s.color};font-size:13px;width:16px;">${STAT_ICONS[key] || '●'}</span>${s.label}</span>
-        <span>${val} XP</span>
+        <div class="substat-head">
+          <span style="display:flex;align-items:center;gap:6px;"><span class="stat-icon" style="color:${s.color};font-size:13px;width:16px;">${STAT_ICONS[key] || '●'}</span>${s.label}</span>
+          <span style="font-weight:700;color:${s.color};">Lvl ${lv.level}</span>
+        </div>
+        <div class="stat-lvl-bar"><div style="width:${pct}%;background:${hexToRgba(s.color, .55)}"></div></div>
       </div>
     `;
   }).join('');
@@ -665,10 +685,11 @@ function renderIntelligenceStat(sXP, intTotal) {
       <div class="stat-row-main" onclick="toggleStatCategory()">
         <span class="name"><span class="stat-icon" style="color:${INTELLIGENCE_META.color}">${INTELLIGENCE_META.icon}</span>${INTELLIGENCE_META.label}</span>
         <span style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:12px;color:var(--text-dim);">${intTotal} XP</span>
+          <span style="font-size:12px;font-weight:700;color:${INTELLIGENCE_META.color};">Lvl ${parentLv.level}</span>
           <span style="font-size:11px;">${openStatCategory ? '▲' : '▼'}</span>
         </span>
       </div>
+      <div class="stat-lvl-bar"><div style="width:${parentPct}%;background:${hexToRgba(INTELLIGENCE_META.color, .55)}"></div></div>
       ${openStatCategory ? `<div class="substat-wrap">${rows}</div>` : ''}
     </div>
   `;
