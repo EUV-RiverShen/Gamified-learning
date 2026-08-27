@@ -201,8 +201,6 @@ input, select, textarea{ font-family: inherit; }
 .qg-item .qg-label{ font-weight:700; font-size:13.5px; margin-bottom:2px; }
 .qg-item .qg-status{ font-size:11.5px; color:var(--text-dim); }
 .qg-item .qg-status.done{ color: var(--green); }
-.qg-bar{ width:100%; height:4px; background:var(--card); border-radius:3px; overflow:hidden; margin-top:5px;}
-.qg-bar > div{ height:100%; background:var(--blue); }
 
 /* Quest Modal specific */
 .qm-tabs{ display:flex; border-bottom:0.5px solid var(--border); }
@@ -361,7 +359,7 @@ let currentView = 'character';
 
 let questPanelCollapsed = false;
 let openStatCategory = false;
-let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
+let currentModuleTab = 'tree'; // 'tree' | 'guild'
 
 /* =========================================================================
    STORAGE
@@ -380,10 +378,31 @@ let currentModuleTab = 'tree'; // 'tree' | 'questgeber'
 // brauchen dagegen KEINE Migration — dafür reicht ein gezielter, einmaliger
 // Patch direkt im gespeicherten JSON (log-Einträge haben ihren eigenen,
 // eingefrorenen xp-Wert, siehe Kommentar beim modules-Datenmodell oben).
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const MIGRATIONS = {
-  // Beispiel für später:
-  // 2: (state) => { state.modules.forEach(m => { m.someNewField ??= 'default'; }); return state; }
+  // Umbau auf modulweite Gilden-Quests statt fester Questgeber-Cluster pro
+  // Unterkapitel (siehe generateGuildQuest()): Kernpunkte bleiben unverändert
+  // (samt covered-Status), nur die alte questgeber-Gruppierung fällt weg, und
+  // jedes Modul bekommt eine Gilde (aktuelle Quest + Archiv abgeschlossener
+  // Quests). m.log bleibt für die bestehende XP-Auswertung (statXP) erhalten.
+  2: (state) => {
+    for (const m of (state.modules || [])) {
+      if (!m.guild) m.guild = { currentQuest: null, archive: [] };
+      // Professor-Chat war bisher pro Unterkapitel (sn.profChat), ist jetzt
+      // modulweit (m.profChat, siehe renderProfTab) -- bestehende Verläufe
+      // zusammenführen statt zu verwerfen.
+      const mergedProfChat = [];
+      for (const ch of (m.chapters || [])) {
+        for (const sn of (ch.subnodes || [])) {
+          if (Array.isArray(sn.profChat)) mergedProfChat.push(...sn.profChat);
+          delete sn.profChat;
+          delete sn.questgeber;
+        }
+      }
+      if (!Array.isArray(m.profChat)) m.profChat = mergedProfChat;
+    }
+    return state;
+  }
 };
 
 function runMigrations(state) {
@@ -516,32 +535,27 @@ function chapterProgress(ch) {
   return total === 0 ? 0 : done / total;
 }
 
-// Modul-Level = Anzahl der von Anfang an lückenlos abgeschlossenen Unterkapitel
+// Modul-Level = Anzahl der abgeschlossenen Unterkapitel, UNABHÄNGIG von der Reihenfolge —
+// Gilden-Quests kombinieren Kernpunkte aus dem ganzen Modul, ein Unterkapitel kann also
+// abgeschlossen werden, bevor ein früheres es ist (siehe generateGuildQuest()).
 function computeModuleLevel(m) {
-  const flat = flatSubnodes(m);
-  let level = 0;
-  for (const { subnode } of flat) {
-    if (subnodeCovered(subnode)) level++;
-    else break;
-  }
-  return level;
+  return flatSubnodes(m).filter(x => subnodeCovered(x.subnode)).length;
 }
 function moduleMaxLevel(m) { return flatSubnodes(m).length; }
 
-// Ist das Unterkapitel mit gegebenem globalIndex erreichbar? (erstes immer, sonst Vorgänger fertig)
+// Der Skilltree ist eine reine Fortschritts-Karte, keine Freischalt-Kette mehr — Gilden-
+// Quests brauchen ohnehin Kernpunkte aus dem ganzen Modul, eine lineare Sperre würde dem
+// widersprechen. Funktion bleibt (statt alle Aufrufstellen zu entfernen), liefert aber
+// immer true.
 function isSubnodeUnlocked(m, globalIndex) {
-  if (globalIndex <= 1) return true;
-  return computeModuleLevel(m) >= globalIndex - 1;
+  return true;
 }
 
-function findQuestgeber(questgeberId) {
+function findBossExercise(exerciseId) {
   for (const m of modules) {
     for (const ch of m.chapters) {
       for (const sn of ch.subnodes) {
-        for (const qg of sn.questgeber) {
-          if (qg.id === questgeberId) return { module: m, chapter: ch, subnode: sn, questgeber: qg };
-        }
-        if (sn.exercise && sn.exercise.id === questgeberId) {
+        if (sn.exercise && sn.exercise.id === exerciseId) {
           return { module: m, chapter: ch, subnode: sn, exercise: sn.exercise, isBoss: true };
         }
       }
@@ -558,7 +572,16 @@ function statXP() {
   const sums = { med:0, nat:0, ges:0, wei:0, int:0 };
   for (const m of modules) {
     for (const entry of (m.log || [])) {
-      if (sums[entry.stat] != null) sums[entry.stat] += (entry.xp || 0);
+      // statBreakdown: neues Format (Gilden-Quest kann mehrere Fächer kombinieren).
+      // entry.stat/entry.xp: altes Format (ein fester Stat pro Quest), für bereits
+      // gespeicherte Log-Einträge aus der Zeit vor dem Gilden-Umbau.
+      if (entry.statBreakdown) {
+        for (const stat in entry.statBreakdown) {
+          if (sums[stat] != null) sums[stat] += (entry.statBreakdown[stat] || 0);
+        }
+      } else if (sums[entry.stat] != null) {
+        sums[entry.stat] += (entry.xp || 0);
+      }
     }
   }
   return sums;
@@ -714,33 +737,33 @@ function figureSvg(g) {
   </svg>`;
 }
 
-// Für Rückstand/Tagesziel wird direkt in QUESTGEBERN gezählt (nicht in Kernpunkten
-// umgerechnet) — jeder Questgeber ist ein fester, schon beim Upload feststehender
-// Cluster (qg.kernpunkteIds), und praktisch eine Quest. Das ist eine ECHTE Zählung,
-// kein geschätzter Durchschnitt: eine frühere Version hat die Restarbeit (Kernpunkte)
-// durch einen aus der bisherigen Quest-Historie GESCHÄTZTEN Schnitt geteilt — bei
-// wenigen, ungleich großen Clustern (manche 3, manche 35 Kernpunkte) ist so ein
-// Schnitt leicht verzerrt und stimmt nicht mit der tatsächlichen Anzahl noch offener
-// Questgeber überein.
+// Für Rückstand/Tagesziel wird in QUESTS gezählt (siehe moduleQuestgeberStats()
+// weiter unten) — seit dem Umbau auf modulweite Gilden-Quests gibt es keine feste,
+// beim Upload feststehende Cluster-Anzahl mehr, deshalb ist "total" dort zwangsläufig
+// eine Schätzung (Durchschnitt der Kernpunkte pro bisher tatsächlich abgeschlossener
+// Quest, hochgerechnet auf die noch offenen Kernpunkte) statt einer exakten Zählung.
 //
 // Ein Questgeber gilt als "erledigt", wenn alle Kernpunkte SEINES eigenen Clusters
 // abgedeckt sind — unabhängig davon, ob das über seine eigene Quest passierte oder
 // (durch die Pool-/Wiederholungs-Logik in generateAndSetQuest) über eine andere.
+// Es gibt keine vorab feststehende Questgeber-/Quest-Anzahl mehr — die Gilde kombiniert
+// bei jeder Quest so viele noch offene Kernpunkte wie sinnvoll zu EINEM Fall (siehe
+// generateGuildQuest()), die Gesamtzahl der nötigen Quests steht also erst am Ende fest.
+// "total"/"remaining" sind deshalb eine Schätzung: Durchschnitt der Kernpunkte pro bisher
+// TATSÄCHLICH abgeschlossener Quest, hochgerechnet auf die noch offenen Kernpunkte — wird
+// mit jeder abgeschlossenen Quest realistischer. Vor der ersten Quest ein grober
+// Startwert (früherer Cluster-Richtwert war 3-6 Kernpunkte).
 function moduleQuestgeberStats(m) {
-  let total = 0, done = 0;
-  for (const ch of m.chapters) {
-    for (const sn of ch.subnodes) {
-      for (const qg of sn.questgeber) {
-        total++;
-        const allCovered = qg.kernpunkteIds.every(id => {
-          const kp = sn.kernpunkte.find(k => k.id === id);
-          return kp && kp.covered;
-        });
-        if (allCovered) done++;
-      }
-    }
+  let totalKp = 0, coveredKp = 0;
+  for (const { subnode } of flatSubnodes(m)) {
+    totalKp += subnode.kernpunkte.length;
+    coveredKp += subnode.kernpunkte.filter(k => k.covered).length;
   }
-  return { total, done, remaining: total - done };
+  const done = (m.log || []).length;
+  const avgKpPerQuest = done > 0 ? coveredKp / done : 5;
+  const remainingKp = totalKp - coveredKp;
+  const remaining = avgKpPerQuest > 0 ? Math.ceil(remainingKp / avgKpPerQuest) : 0;
+  return { total: done + remaining, done, remaining };
 }
 function questWord(n) { return Math.abs(n) === 1 ? 'Quest' : 'Quests'; }
 
@@ -955,11 +978,12 @@ async function resetModuleProgress(moduleId) {
     for (const ch of m.chapters) {
       for (const sn of ch.subnodes) {
         for (const kp of sn.kernpunkte) kp.covered = false;
-        for (const qg of sn.questgeber) qg.currentQuest = null;
         if (sn.exercise) sn.exercise.passed = false;
       }
     }
     m.log = [];
+    m.guild = { currentQuest: null, archive: [] };
+    m.profChat = [];
     await saveState();
     currentModuleTab = 'tree';
     renderSkilltree();
@@ -973,19 +997,7 @@ async function resetModuleProgress(moduleId) {
 ========================================================================= */
 function renderQuestPanel() {
   const panel = document.getElementById('quest-panel');
-  const activeList = [];
-  for (const m of modules) {
-    for (const ch of m.chapters) {
-      for (const sn of ch.subnodes) {
-        if (!isSubnodeUnlocked(m, sn.globalIndex)) continue;
-        for (const qg of sn.questgeber) {
-          if (qg.currentQuest && qg.currentQuest.accepted) {
-            activeList.push({ m, ch, sn, qg });
-          }
-        }
-      }
-    }
-  }
+  const activeList = modules.filter(m => m.guild && m.guild.currentQuest && m.guild.currentQuest.accepted);
   if (activeList.length === 0) { panel.classList.add('hidden'); return; }
   panel.classList.remove('hidden');
   panel.classList.toggle('collapsed', questPanelCollapsed);
@@ -995,10 +1007,10 @@ function renderQuestPanel() {
       <span style="font-size:12px;color:var(--text-dim);">${questPanelCollapsed ? '▲' : '▼'}</span>
     </div>
     <div class="qp-body">
-      ${activeList.map(item => `
-        <div class="qp-item" onclick="openQuestModal('${item.qg.id}')">
-          <div class="qi-title">${escapeHtml(item.qg.currentQuest.title)}</div>
-          <div class="qi-meta">${escapeHtml(item.m.title)} · ${item.qg.currentQuest.durationMin || '?'} min · <span class="xp-pill" style="padding:1px 6px;">+${item.qg.currentQuest.xp||0} XP</span></div>
+      ${activeList.map(m => `
+        <div class="qp-item" onclick="openGuildQuestModal('${m.id}')">
+          <div class="qi-title">${escapeHtml(m.guild.currentQuest.title)}</div>
+          <div class="qi-meta">${escapeHtml(m.title)} · ${m.guild.currentQuest.durationMin || '?'} min · <span class="xp-pill" style="padding:1px 6px;">+${m.guild.currentQuest.xp||0} XP</span></div>
         </div>
       `).join('')}
     </div>
@@ -1055,12 +1067,12 @@ function renderSkilltree() {
     ` : ''}
     <div class="qm-tabs" style="margin-bottom:14px;border-radius:var(--radius-sm);border:0.5px solid var(--border);overflow:hidden;">
       <div class="qm-tab ${currentModuleTab==='tree'?'active':''}" onclick="switchModuleTab('tree')">🌳 Skilltree</div>
-      <div class="qm-tab ${currentModuleTab==='questgeber'?'active':''}" onclick="switchModuleTab('questgeber')">🧭 Entdecken</div>
+      <div class="qm-tab ${currentModuleTab==='guild'?'active':''}" onclick="switchModuleTab('guild')">🏰 Gilde</div>
     </div>
   `;
 
-  if (currentModuleTab === 'questgeber') {
-    el.innerHTML = tabsHtml + renderQuestgeberDiscoverList(m);
+  if (currentModuleTab === 'guild') {
+    el.innerHTML = tabsHtml + renderGuildTab(m);
     return;
   }
 
@@ -1104,11 +1116,10 @@ function renderSkilltree() {
       const prog = subnodeProgress(n.data);
       const hasBoss = !!n.data.exercise;
       const color = n.parent.color;
-      const unlocked = isSubnodeUnlocked(getModule(activeModuleId), n.data.globalIndex);
-      const icon = !unlocked ? '🔒' : (prog >= 1 ? '✓' : (n.data.icon || STAT_ICONS[n.parent.stat] || '📖'));
+      const icon = prog >= 1 ? '✓' : (n.data.icon || STAT_ICONS[n.parent.stat] || '📖');
       return `
-        <g class="tree-node" style="--hover-r:22;${unlocked?'':'opacity:.4;'}" onclick="openSubnodeChecklist('${n.data.id}')"
-           onmousemove="showTooltip(evt, '${escapeHtml(n.data.title)}', '${unlocked ? Math.round(prog*100)+'% — Klick für Themen-Checkliste' : 'Gesperrt — vorheriges Unterkapitel zuerst abschließen'}')"
+        <g class="tree-node" style="--hover-r:22;" onclick="openSubnodeChecklist('${n.data.id}')"
+           onmousemove="showTooltip(evt, '${escapeHtml(n.data.title)}', '${Math.round(prog*100)}% — Klick für Themen-Checkliste')"
            onmouseleave="hideTooltip()">
           <circle class="node-ring" cx="${n.x}" cy="${n.y}" r="18" fill="#1a1a1e" stroke="${color}" stroke-width="2.5"/>
           <circle cx="${n.x}" cy="${n.y}" r="18" fill="none" stroke="${color}" stroke-width="3"
@@ -1149,7 +1160,6 @@ function openSubnodeChecklist(subnodeId) {
   for (const ch of m.chapters) {
     for (const sn of ch.subnodes) {
       if (sn.id === subnodeId) {
-        if (!isSubnodeUnlocked(m, sn.globalIndex)) return;
         renderSubnodeChecklistModal(ch, sn);
         return;
       }
@@ -1160,21 +1170,10 @@ function closeSubnodeChecklist() { document.getElementById('modal-root').innerHT
 
 function renderSubnodeChecklistModal(ch, sn) {
   const root = document.getElementById('modal-root');
-  // Kernpunkte gruppiert nach ihrem ursprünglichen Cluster (Questgeber-Label), nur zur Lesbarkeit
-  const groups = sn.questgeber.map(qg => ({
-    label: qg.label,
-    kernpunkte: qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean)
-  })).filter(g => g.kernpunkte.length);
-
-  const groupsHtml = groups.map(g => `
-    <div style="margin-bottom:14px;">
-      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">${escapeHtml(g.label)}</div>
-      ${g.kernpunkte.map(kp => `
-        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;${kp.covered?'color:var(--text-dim);':''}">
-          <span style="color:${kp.covered?'var(--green)':'var(--text-faint)'};">${kp.covered ? '✓' : '○'}</span>
-          <span style="${kp.covered?'text-decoration:line-through;':''}">${escapeHtml(kp.label)}</span>
-        </div>
-      `).join('')}
+  const itemsHtml = sn.kernpunkte.map(kp => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;${kp.covered?'color:var(--text-dim);':''}">
+      <span style="color:${kp.covered?'var(--green)':'var(--text-faint)'};">${kp.covered ? '✓' : '○'}</span>
+      <span style="${kp.covered?'text-decoration:line-through;':''}">${escapeHtml(kp.label)}</span>
     </div>
   `).join('');
 
@@ -1191,8 +1190,8 @@ function renderSubnodeChecklistModal(ch, sn) {
           <button class="btn btn-ghost btn-sm" onclick="closeSubnodeChecklist()">✕</button>
         </div>
         <div class="modal-body">
-          <div style="margin-bottom:14px;font-size:13px;color:var(--text-dim);">${done}/${total} Themen abgehakt — Quests dazu findest du im "🧭 Entdecken"-Tab, sobald sie erreichbar sind.</div>
-          ${groupsHtml || `<div class="qp-empty">Keine Themen erfasst.</div>`}
+          <div style="margin-bottom:14px;font-size:13px;color:var(--text-dim);">${done}/${total} Themen abgehakt — die Gilde kombiniert diese ggf. mit Themen aus anderen Unterkapiteln zu echten Quests, findest du im "🏰 Gilde"-Tab.</div>
+          ${itemsHtml || `<div class="qp-empty">Keine Themen erfasst.</div>`}
           ${sn.exercise ? `<div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);font-size:12.5px;color:var(--text-dim);">💀 Enthält außerdem einen Kapitel-Boss (Originalübung).</div>` : ''}
         </div>
       </div>
@@ -1201,62 +1200,94 @@ function renderSubnodeChecklistModal(ch, sn) {
 }
 
 /* =========================================================================
-   QUESTGEBER-TAB ("Entdecken") — flache Liste aller freigeschalteten
-   Questgeber im Modul, unabhängig vom Skilltree-Klickpfad
+   GILDE-TAB — die Gilde vergibt IMMER genau EINE aktuelle Quest modulweit
+   (kombiniert Kernpunkte aus dem ganzen Modul statt fester Questgeber pro
+   Unterkapitel, siehe generateGuildQuest()), plus ein Archiv abgeschlossener
+   Fälle zum Nachlesen. Kapitel-Boss-Übungen bleiben unabhängig davon.
 ========================================================================= */
-function renderQuestgeberDiscoverList(m) {
-  const items = [];
-  for (const ch of m.chapters) {
-    for (const sn of ch.subnodes) {
-      if (!isSubnodeUnlocked(m, sn.globalIndex)) continue;
-      for (const qg of sn.questgeber) items.push({ ch, sn, qg, isBoss: false });
-      if (sn.exercise) items.push({ ch, sn, exercise: sn.exercise, isBoss: true });
-    }
+function renderGuildTab(m) {
+  const bossItems = [];
+  for (const ch of m.chapters) for (const sn of ch.subnodes) {
+    if (sn.exercise) bossItems.push({ ch, sn, exercise: sn.exercise });
   }
-  if (items.length === 0) {
-    return `<div class="card" style="text-align:center;padding:30px 16px;color:var(--text-faint);">Noch keine Questgeber freigeschaltet.</div>`;
-  }
-  return `
-    <div>
-      ${items.map(it => {
-        if (it.isBoss) {
-          return `
-            <div class="qg-item" style="border-left:3px solid var(--red);" onclick="openQuestModal('${it.exercise.id}')">
-              <div class="qg-icon">💀</div>
-              <div class="qg-main">
-                <div class="qg-label">${escapeHtml(it.exercise.title)}</div>
-                <div class="qg-status">${escapeHtml(it.ch.title)} · ${escapeHtml(it.sn.title)} — Kapitel-Boss${it.exercise.passed ? ' · bestanden ✓' : ''}</div>
-              </div>
-            </div>
-          `;
-        }
-        const st = questgeberStatusFor(it.sn, it.qg);
-        const pct = st.total ? Math.round((st.done/st.total)*100) : 0;
-        return `
-          <div class="qg-item" onclick="openQuestModal('${it.qg.id}')">
-            <div class="qg-icon">${st.complete ? '✓' : '🧙'}</div>
-            <div class="qg-main">
-              <div class="qg-label">${escapeHtml(it.qg.name)}</div>
-              <div class="qg-status ${st.complete?'done':''}">Level ${it.sn.globalIndex}${st.complete ? ' — abgeschlossen, wiederholbar' : ''}</div>
-              <div class="qg-bar"><div style="width:${pct}%"></div></div>
-            </div>
+
+  const gq = m.guild && m.guild.currentQuest;
+  const guildCardHtml = gq ? `
+    <div class="qg-item" onclick="openGuildQuestModal('${m.id}')">
+      <div class="qg-icon">${gq.accepted ? '🧙' : '🏰'}</div>
+      <div class="qg-main">
+        <div class="qg-label">${gq.accepted ? escapeHtml(gq.npcName) : 'Die Gilde hat eine Anfrage für dich'}</div>
+        <div class="qg-status">${gq.accepted ? escapeHtml(gq.title) : escapeHtml(gq.npcHook || 'Klick, um zu sehen worum es geht.')}</div>
+      </div>
+    </div>
+  ` : `
+    <div class="qg-item" onclick="requestGuildQuest('${m.id}')">
+      <div class="qg-icon">🏰</div>
+      <div class="qg-main">
+        <div class="qg-label">Die Gilde hat gerade nichts für dich</div>
+        <div class="qg-status">Klick, um nach einer neuen Quest zu fragen</div>
+      </div>
+    </div>
+  `;
+
+  const bossHtml = bossItems.map(it => `
+    <div class="qg-item" style="border-left:3px solid var(--red);" onclick="openBossModal('${it.exercise.id}')">
+      <div class="qg-icon">💀</div>
+      <div class="qg-main">
+        <div class="qg-label">${escapeHtml(it.exercise.title)}</div>
+        <div class="qg-status">${escapeHtml(it.ch.title)} · ${escapeHtml(it.sn.title)} — Kapitel-Boss${it.exercise.passed ? ' · bestanden ✓' : ''}</div>
+      </div>
+    </div>
+  `).join('');
+
+  const archive = (m.guild && m.guild.archive) || [];
+  const archiveHtml = archive.length ? `
+    <div class="section-label" style="margin-top:18px;">Abgeschlossene Quests (${archive.length})</div>
+    ${archive.slice().reverse().map((a, idx) => `
+      <div class="qg-item" onclick="openArchivedQuest('${m.id}', ${archive.length - 1 - idx})">
+        <div class="qg-icon">✓</div>
+        <div class="qg-main">
+          <div class="qg-label">${escapeHtml(a.title)}</div>
+          <div class="qg-status">${escapeHtml(a.npcName)} · ${formatDateShort(a.date)} · +${a.xp} XP</div>
+        </div>
+      </div>
+    `).join('')}
+  ` : '';
+
+  return `<div>${guildCardHtml}${bossHtml}${archiveHtml}</div>`;
+}
+
+// Read-only Rückblick auf eine abgeschlossene Gilden-Quest (kompletter Chat-
+// Verlauf, nicht nur Titel+XP) — das "Anheften" abgeschlossener Quests.
+function openArchivedQuest(moduleId, idx) {
+  const m = getModule(moduleId);
+  const a = m && m.guild && m.guild.archive && m.guild.archive[idx];
+  if (!a) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" onclick="if(event.target===this) document.getElementById('modal-root').innerHTML=''">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;">${formatDateShort(a.date)} · +${a.xp} XP · ${escapeHtml(a.npcName)}</div>
+            <h2>${escapeHtml(a.title)}</h2>
           </div>
-        `;
-      }).join('')}
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('modal-root').innerHTML=''">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="npc-chat">
+            ${(a.npcChat || []).map(c => `<div class="npc-msg ${c.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(c.text)}</div>`).join('')}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
-function questgeberStatusFor(sn, qg) {
-  const kps = qg.kernpunkteIds;
-  const total = kps.length;
-  const done = kps.filter(id => { const kp = sn.kernpunkte.find(k=>k.id===id); return kp && kp.covered; }).length;
-  return { done, total, complete: total > 0 && done === total };
-}
 
 /* =========================================================================
-   QUEST MODAL (Questgeber-Tab generiert Quests on-demand)
+   QUEST MODAL (Gilde generiert Quests on-demand, modulweit statt pro Questgeber)
 ========================================================================= */
-let currentQuestCtx = null; // { module, chapter, subnode, questgeber, isBoss, exercise }
+let currentQuestCtx = null; // { module, isBoss, chapter?, subnode?, exercise? }
 let qmActiveTab = 'npc';
 let qmGenerating = false;
 let qmBossAnswer = '';
@@ -1268,10 +1299,7 @@ let qmSubmitArmed = false; // true = erster Klick auf "Antwort einreichen" schon
 let qmProfSending = false;
 let qmProfError = null;
 
-async function openQuestModal(questgeberId) {
-  const loc = findQuestgeber(questgeberId);
-  if (!loc) return;
-  currentQuestCtx = loc;
+function resetQuestModalState() {
   qmActiveTab = 'npc';
   qmBossAnswer = '';
   qmBossFeedback = null;
@@ -1282,19 +1310,38 @@ async function openQuestModal(questgeberId) {
   qmProfSending = false;
   qmProfError = null;
   dismissQuestResult();
-  document.getElementById('modal-root').innerHTML = ''; // ggf. Questgeber-Liste schließen
+  document.getElementById('modal-root').innerHTML = ''; // ggf. Gilde-Liste schließen
+}
+
+async function openGuildQuestModal(moduleId) {
+  const m = getModule(moduleId);
+  if (!m) return;
+  if (!m.guild) m.guild = { currentQuest: null, archive: [] };
+  currentQuestCtx = { module: m, isBoss: false };
+  resetQuestModalState();
   renderQuestModal();
 
-  if (!loc.isBoss && !loc.questgeber.currentQuest) {
-    await generateAndSetQuest(loc);
+  if (!m.guild.currentQuest) {
+    await generateGuildQuest(m);
   }
+}
+// Von der Gilde noch keine Quest angefragt: erzeugt eine und öffnet direkt das Modal.
+async function requestGuildQuest(moduleId) {
+  await openGuildQuestModal(moduleId);
+}
+async function openBossModal(exerciseId) {
+  const loc = findBossExercise(exerciseId);
+  if (!loc) return;
+  currentQuestCtx = loc;
+  resetQuestModalState();
+  renderQuestModal();
 }
 function closeQuestModal() { currentQuestCtx = null; document.getElementById('modal-root').innerHTML = ''; }
 
 function renderQuestModal() {
   const root = document.getElementById('modal-root');
   if (!currentQuestCtx) { root.innerHTML = ''; return; }
-  const { module: m, chapter: ch, subnode: sn, questgeber: qg, isBoss, exercise } = currentQuestCtx;
+  const { module: m, isBoss, exercise } = currentQuestCtx;
 
   let bodyHtml = '';
   let title = '';
@@ -1304,16 +1351,17 @@ function renderQuestModal() {
     title = '⚔️ ' + exercise.title;
     bodyHtml = renderBossPanel(exercise);
   } else {
-    title = qg.name;
+    const gq = m.guild && m.guild.currentQuest;
+    title = (gq && gq.npcName) || 'Gilde';
     tabs = [{ id: 'npc', label: '🧙 Questgeber' }, { id: 'map', label: '🗺️ Wissenskarte' }, { id: 'prof', label: '🎓 Professor' }];
     if (qmGenerating) {
-      bodyHtml = `<div class="gen-loading"><div class="spinner"></div>Questgeber überlegt sich eine Aufgabe...</div>`;
+      bodyHtml = `<div class="gen-loading"><div class="spinner"></div>Die Gilde sucht eine passende Aufgabe...</div>`;
     } else if (qmActiveTab === 'npc') {
-      bodyHtml = renderNpcTab(qg);
+      bodyHtml = renderNpcTab(m);
     } else if (qmActiveTab === 'map') {
       bodyHtml = renderMapTab(m);
     } else if (qmActiveTab === 'prof') {
-      bodyHtml = renderProfTab(sn);
+      bodyHtml = renderProfTab(m);
     }
   }
 
@@ -1332,13 +1380,13 @@ function renderQuestModal() {
 }
 function switchQmTab(t) { qmActiveTab = t; qmSubmitArmed = false; renderQuestModal(); }
 
-function renderNpcTab(qg) {
-  const q = qg.currentQuest;
-  if (!q) return `<div class="gen-loading">Kein aktuelles Anliegen. Sprich den Questgeber nochmal an.</div>`;
+function renderNpcTab(m) {
+  const q = m.guild && m.guild.currentQuest;
+  if (!q) return `<div class="gen-loading">Keine aktuelle Anfrage. Sprich die Gilde nochmal an.</div>`;
 
   if (!q.accepted) {
     return `
-      ${qmQuestFeedback && !qmQuestFeedback.pass ? `<div class="boss-feedback fail">${escapeHtml(qmQuestFeedback.text)} ${escapeHtml(qg.name)} übernimmt jetzt für dich.</div>` : ''}
+      ${qmQuestFeedback && !qmQuestFeedback.pass ? `<div class="boss-feedback fail">${escapeHtml(qmQuestFeedback.text)} Die Gilde hat eine neue Aufgabe für dich.</div>` : ''}
       <div class="npc-hook">${escapeHtml(q.npcHook)}</div>
       <div style="margin-top:16px;display:flex;justify-content:flex-end;">
         <button class="btn btn-primary" onclick="acceptQuest()">Quest annehmen</button>
@@ -1352,22 +1400,22 @@ function renderNpcTab(qg) {
       <span class="muster-pill">Muster ${q.muster || '?'} · ${q.durationMin || '?'} min</span>
     </div>
     <div class="npc-chat" id="npc-chat-box">
-      ${chat.map(m => `<div class="npc-msg ${m.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('')}
+      ${chat.map(c => `<div class="npc-msg ${c.role === 'npc' ? 'npc' : 'me'}">${escapeHtml(c.text)}</div>`).join('')}
     </div>
     <div class="chat-input-row">
-      <input type="text" id="npc-chat-input" placeholder="Erklär ${escapeHtml(qg.name)} was du weißt..." onkeydown="if(event.key==='Enter') sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>
+      <input type="text" id="npc-chat-input" placeholder="Erklär ${escapeHtml(q.npcName)} was du weißt..." onkeydown="if(event.key==='Enter') sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>
       <button class="btn btn-sm" onclick="sendNpcChat()" ${qmSubmittingAnswer ? 'disabled' : ''}>Senden</button>
     </div>
     ${qmQuestError ? `<div class="boss-feedback fail">${escapeHtml(qmQuestError)}</div>` : ''}
     <div style="margin-top:14px;display:flex;justify-content:flex-end;align-items:center;gap:10px;">
       ${qmSubmitArmed ? `<span style="font-size:12px;color:var(--text-dim);cursor:pointer;" onclick="qmSubmitArmed=false;renderQuestModal();">Abbrechen</span>` : ''}
-      <button class="btn ${qmSubmitArmed ? 'btn-danger' : 'btn-primary'}" id="quest-submit-btn" onclick="handleQuestSubmitClick()" ${qmSubmittingAnswer || !chat.some(m => m.role === 'me') ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : (qmSubmitArmed ? 'Sicher? Nochmal klicken' : 'Antwort einreichen')}</button>
+      <button class="btn ${qmSubmitArmed ? 'btn-danger' : 'btn-primary'}" id="quest-submit-btn" onclick="handleQuestSubmitClick()" ${qmSubmittingAnswer || !chat.some(c => c.role === 'me') ? 'disabled' : ''}>${qmSubmittingAnswer ? 'Wird bewertet...' : (qmSubmitArmed ? 'Sicher? Nochmal klicken' : 'Antwort einreichen')}</button>
     </div>
   `;
 }
 
 async function acceptQuest() {
-  const q = currentQuestCtx.questgeber.currentQuest;
+  const q = currentQuestCtx.module.guild.currentQuest;
   q.accepted = true;
   qmQuestFeedback = null;
   // Startet direkt im Dialog statt mit einer Textwand: die npcHook-Zeile (die
@@ -1388,8 +1436,8 @@ async function sendNpcChat() {
   if (!text) return;
   input.value = '';
   qmSubmitArmed = false; // neue Nachricht geschickt statt bestätigt einzureichen — Arm-Status verwirft sich
-  const { subnode: sn, questgeber: qg } = currentQuestCtx;
-  const q = qg.currentQuest;
+  const m = currentQuestCtx.module;
+  const q = m.guild.currentQuest;
   if (!q.npcChat) q.npcChat = [];
   q.npcChat.push({ role: 'me', text });
   await saveState(); // sofort sichern — nicht erst warten, bis die Quest fertig/eingereicht ist
@@ -1401,7 +1449,7 @@ async function sendNpcChat() {
   // hat unaufgefordert eine Ernährungs-Timing-Praxisfrage samt eigener, sachlich
   // fragwürdiger Behauptung eingebracht — das gehört gar nicht zu den Zielkernpunkten
   // dieses Unterkapitels).
-  const targetLabels = (q.targetKernpunkteIds || []).map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
+  const targetLabels = kernpunktLabelsForIds(m, q.targetKernpunkteIds || []);
   const prompt = `Du spielst die Rolle eines Questgebers (Laie ohne Fachwissen) in einer Lern-App.
 Dein Fall: ${q.scenario}
 Worum es in deinem Anliegen fachlich eigentlich geht (nur Kontext für dich, dem Spieler nicht als Liste zeigen): ${JSON.stringify(targetLabels)}
@@ -1443,11 +1491,11 @@ function focusChatInput() {
    Unterkapitel (sn.profChat), nicht pro Questgeber — ein Professor pro Thema,
    unabhängig davon über welchen Questgeber man reinkommt.
 ========================================================================= */
-function renderProfTab(sn) {
-  const chat = sn.profChat || [];
+function renderProfTab(m) {
+  const chat = m.profChat || [];
   return `
     <div class="npc-chat" id="prof-chat-box">
-      ${chat.length ? chat.map(m => `<div class="npc-msg ${m.role === 'prof' ? 'npc' : 'me'}">${escapeHtml(m.text)}</div>`).join('') : `<div class="npc-msg npc">Hey, ich bin dein Professor für "${escapeHtml(sn.title)}" — frag mich einfach, was du wissen willst, oder wo's gerade hakt. Ich kenn den ganzen Studienbrief, nicht nur dieses Unterkapitel.</div>`}
+      ${chat.length ? chat.map(c => `<div class="npc-msg ${c.role === 'prof' ? 'npc' : 'me'}">${escapeHtml(c.text)}</div>`).join('') : `<div class="npc-msg npc">Hey, ich bin dein Professor für "${escapeHtml(m.title)}" — frag mich einfach, was du wissen willst, oder wo's gerade hakt. Ich kenn den ganzen Studienbrief.</div>`}
     </div>
     <div class="chat-input-row">
       <input type="text" id="prof-chat-input" placeholder="Frag den Professor..." onkeydown="if(event.key==='Enter') sendProfChat()" ${qmProfSending ? 'disabled' : ''}>
@@ -1462,9 +1510,9 @@ async function sendProfChat() {
   const text = input.value.trim();
   if (!text || qmProfSending) return;
   input.value = '';
-  const { module: m, chapter: ch, subnode: sn } = currentQuestCtx;
-  if (!sn.profChat) sn.profChat = [];
-  sn.profChat.push({ role: 'me', text });
+  const m = currentQuestCtx.module;
+  if (!m.profChat) m.profChat = [];
+  m.profChat.push({ role: 'me', text });
   await saveState();
   renderQuestModal(); focusChatInput();
 
@@ -1472,21 +1520,25 @@ async function sendProfChat() {
   qmProfError = null;
   renderQuestModal();
 
-  const priorTitles = flatSubnodes(m).filter(x => x.subnode.globalIndex < sn.globalIndex).map(x => x.subnode.title);
-  const coveredHere = sn.kernpunkte.filter(k => k.covered).map(k => k.label);
-  const openHere = sn.kernpunkte.filter(k => !k.covered).map(k => k.label);
+  // Fortschritt jetzt modulweit statt pro Unterkapitel (Gilden-Quests kombinieren
+  // ohnehin Kernpunkte aus dem ganzen Modul, eine einzelne "aktuelle Position" im
+  // Baum gibt es nicht mehr) — die gerade offene Gilden-Quest liefert stattdessen
+  // den unmittelbaren Kontext, falls vorhanden.
+  const coveredAll = [], openAll = [];
+  for (const ch of m.chapters) for (const sn of ch.subnodes) for (const kp of sn.kernpunkte) {
+    (kp.covered ? coveredAll : openAll).push(kp.label);
+  }
+  const gq = m.guild && m.guild.currentQuest;
 
   const prompt = `Du bist ein geduldiger, freundlicher Fach-Professor in einer Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement). Im Systemkontext hast du den GESAMTEN Studienbrief dieses Moduls als Hintergrundwissen — nutze NUR den, erfinde keine Fakten dazu.
 
 Wie du erklärst: ein echtes GESPRÄCH, kein Vortrag — kurze, verdauliche Antworten (in der Regel 2-6 Sätze, nur bei echtem Bedarf länger), keine Textwände. Frag bei Bedarf selbst nach, was genau unklar ist, statt pauschal alles runterzurattern. Beantworte auch Gegenfragen/Verständnisfragen direkt und ehrlich.
 
-Aktuelle Position des Studierenden: Unterkapitel "${sn.title}" aus Kapitel "${ch.title}".
-Bereits behandelte Begriffe in diesem Unterkapitel: ${coveredHere.length ? coveredHere.join(', ') : '(noch keine)'}
-Noch offene Begriffe in diesem Unterkapitel: ${openHere.length ? openHere.join(', ') : '(keine)'}
-Bereits abgeschlossene frühere Unterkapitel: ${priorTitles.length ? priorTitles.join(', ') : '(keine)'}
-Orientiere dich standardmäßig an dieser Position. Fragt der Studierende explizit nach späterem Stoff (noch nicht erreichten Unterkapiteln), antworte trotzdem ehrlich aus dem vollständigen Studienbrief — blockiere die Frage NICHT — weise aber kurz beiläufig darauf hin, dass das eigentlich später drankommt (z.B. "Das kommt zwar erst später dran, aber kurz gesagt: ...").
+Fortschritt des Studierenden in "${m.title}": ${coveredAll.length} von ${coveredAll.length + openAll.length} Begriffen bereits über Quests bearbeitet.
+${gq && gq.accepted ? `Die Studierende hat gerade eine offene Quest zum Thema "${gq.title}" — orientiere dich daran, falls die Frage dazu passt.` : ''}
+Beantworte Fragen zu JEDEM Thema aus dem Studienbrief ehrlich — auch zu noch nicht bearbeiteten Begriffen, blockiere nichts.
 
-Bisheriger Chat-Verlauf mit dir: ${JSON.stringify(sn.profChat.slice(-12))}
+Bisheriger Chat-Verlauf mit dir: ${JSON.stringify(m.profChat.slice(-12))}
 Neue Nachricht vom Studierenden: "${text}"
 
 Antworte NUR mit deinem Antworttext (kein JSON, keine Anführungszeichen drumherum).`;
@@ -1498,7 +1550,7 @@ Antworte NUR mit deinem Antworttext (kein JSON, keine Anführungszeichen drumher
     const rawText = m.pdfText || flatSubnodes(m).map(x => x.subnode.sourceExcerpt).filter(Boolean).join('\n\n');
     const bookContext = `Studienbrief-Text dieses Moduls als Hintergrundwissen:\n\n${rawText.slice(0, 400000)}`;
     const reply = await callClaude(prompt, 700, bookContext);
-    sn.profChat.push({ role: 'prof', text: reply.trim() });
+    m.profChat.push({ role: 'prof', text: reply.trim() });
   } catch (e) {
     console.error('Professor-Chat fehlgeschlagen:', e);
     qmProfError = 'Antwort konnte nicht geladen werden (' + (e.message || e) + '). Versuch es nochmal.';
@@ -1560,10 +1612,14 @@ function renderResultOverlay() {
     return `<span class="result-particle" style="--px:${px}px;--py:${py}px;animation-delay:${delay}s;">${emoji}</span>`;
   }).join('') : '';
 
-  const statMeta = STATS[r.stat];
+  // Eine Gilden-Quest kann mehrere Fächer kombinieren (statBreakdown), anders als
+  // früher ein einzelner fester Stat — pro beteiligtem Fach eine eigene Pille.
   const rewardsHtml = r.pass ? `
     <div class="result-rewards">
-      <span class="result-reward-pill" style="color:${statMeta ? statMeta.color : 'inherit'}">+${r.xp} ${statMeta ? statMeta.label : r.stat}</span>
+      ${Object.entries(r.statBreakdown || {}).map(([stat, xp]) => {
+        const meta = STATS[stat];
+        return `<span class="result-reward-pill" style="color:${meta ? meta.color : 'inherit'}">+${xp} ${meta ? meta.label : stat}</span>`;
+      }).join('')}
       <span class="result-reward-pill" style="color:${INTELLIGENCE_META.color}">+${r.xp} ${INTELLIGENCE_META.label}</span>
     </div>
   ` : '';
@@ -1616,23 +1672,23 @@ function handleQuestSubmitClick() {
 // seiner Stelle auf, damit der Spieler denselben Stoff nochmal in einem
 // frischen Fall (und frischem Chat) üben kann.
 async function submitQuestAnswer() {
-  const { subnode: sn, questgeber: qg } = currentQuestCtx;
-  const q = qg.currentQuest;
+  const m = currentQuestCtx.module;
+  const q = m.guild.currentQuest;
   const chat = q.npcChat || [];
-  if (!chat.some(m => m.role === 'me')) return; // nichts zu bewerten
+  if (!chat.some(c => c.role === 'me')) return; // nichts zu bewerten
 
   qmSubmittingAnswer = true;
   renderQuestModal();
   focusChatInput();
 
   const targetIds = q.targetKernpunkteIds || [];
-  const targetLabels = targetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean).map(k => k.label);
-  const transcript = chat.map(m => `${m.role === 'me' ? 'Spieler' : qg.name}: ${m.text}`).join('\n');
+  const targetLabels = kernpunktLabelsForIds(m, targetIds);
+  const transcript = chat.map(c => `${c.role === 'me' ? 'Spieler' : q.npcName}: ${c.text}`).join('\n');
 
   const prompt = `Du bewertest, ob ein Lernender im Gespräch mit einem NPC dessen Anliegen erfolgreich gelöst hat.
-Anliegen des NPCs (${qg.name}): ${q.scenario}
+Anliegen des NPCs (${q.npcName}): ${q.scenario}
 Zielkernpunkte, die im Gespräch inhaltlich korrekt erklärt/angewendet worden sein müssen: ${JSON.stringify(targetLabels)}
-Gesprächsverlauf (Spieler = Lernender, ${qg.name} = NPC):
+Gesprächsverlauf (Spieler = Lernender, ${q.npcName} = NPC):
 ${transcript}
 
 Antworte NUR als JSON (keine Backticks): {"pass": true/false, "feedback": "kurzes, konstruktives Feedback auf Deutsch, 2-4 Sätze"}
@@ -1653,12 +1709,11 @@ pass=true nur wenn ALLE Zielkernpunkte irgendwo im Gesprächsverlauf inhaltlich 
   qmQuestError = null;
 
   if (parsed.pass) {
-    const { xp, stat } = q;
-    await completeQuest();
-    showQuestResult({ pass: true, xp: xp || 0, stat });
+    const statBreakdown = await completeQuest();
+    showQuestResult({ pass: true, xp: q.xp || 0, statBreakdown });
   } else {
     qmQuestFeedback = { pass: false, text: parsed.feedback || 'Das trifft die Sache noch nicht ganz — versuch es nochmal.' };
-    await regenerateQuestAfterFailure(currentQuestCtx, targetIds);
+    await regenerateQuestAfterFailure(m, targetIds, q.npcName);
     qmSubmittingAnswer = false;
     renderQuestModal();
     renderQuestPanel();
@@ -1666,30 +1721,63 @@ pass=true nur wenn ALLE Zielkernpunkte irgendwo im Gesprächsverlauf inhaltlich 
   }
 }
 
+// Teilt die Quest-XP proportional auf die Fach-Stats der beteiligten Unterkapitel
+// auf (statCounts: {stat: Anzahl Zielkernpunkte aus diesem Stat}) — eine Gilden-
+// Quest kann mehrere Fächer kombinieren, anders als früher (ein Questgeber = ein
+// festes Unterkapitel = ein Stat). Rundung: die letzte Kategorie bekommt den Rest,
+// damit die Summe exakt der Quest-XP entspricht.
+function splitXpByStat(totalXp, statCounts) {
+  const stats = Object.keys(statCounts);
+  const totalCount = stats.reduce((a, s) => a + statCounts[s], 0);
+  if (totalCount === 0) return {};
+  const breakdown = {};
+  let assigned = 0;
+  stats.forEach((s, i) => {
+    if (i === stats.length - 1) { breakdown[s] = totalXp - assigned; }
+    else { const share = Math.round(totalXp * statCounts[s] / totalCount); breakdown[s] = share; assigned += share; }
+  });
+  return breakdown;
+}
+
+// Gibt die statBreakdown zurück (für den Ergebnis-Screen), räumt danach die
+// aktuelle Gilden-Quest weg (nächster Besuch generiert eine frische) und legt
+// den vollständigen Fall im Archiv ab.
 async function completeQuest() {
-  const { module: m, subnode: sn, questgeber: qg } = currentQuestCtx;
-  const q = qg.currentQuest;
-  if (!q) return;
+  const m = currentQuestCtx.module;
+  const q = m.guild.currentQuest;
+  if (!q) return {};
 
-  // Kernpunkte als abgedeckt markieren
+  // Kernpunkte werden modulweit gesucht und abgehakt — eine Gilden-Quest kann
+  // Kernpunkte aus mehreren Unterkapiteln kombinieren, siehe generateGuildQuest().
   const targetIds = q.targetKernpunkteIds || [];
+  const statCounts = {};
   for (const kpId of targetIds) {
-    const kp = sn.kernpunkte.find(k => k.id === kpId);
-    if (kp) kp.covered = true;
+    const found = findKernpunktInModule(m, kpId);
+    if (found) {
+      found.kp.covered = true;
+      statCounts[found.ch.stat] = (statCounts[found.ch.stat] || 0) + 1;
+    }
   }
-  // Log-Eintrag für XP/Wissenskarte. kpCount (wie viele Kernpunkte diese eine Quest
-  // abgedeckt hat) dient nur als Datengrundlage für die Kernpunkte→Quests-Umrechnung
-  // in modulePaceInfo() — Spieler sollen "Quests" sehen, nicht "Kernpunkte".
-  if (!m.log) m.log = [];
-  m.log.push({ questgeberId: qg.id, subnodeId: sn.id, title: q.title, xp: q.xp || 0, stat: q.stat, date: todayIso(), kpCount: targetIds.length });
+  const statBreakdown = splitXpByStat(q.xp || 0, statCounts);
 
-  qg.currentQuest = null; // nächster Besuch generiert eine frische Quest
+  if (!m.log) m.log = [];
+  m.log.push({ title: q.title, statBreakdown, date: todayIso(), kpCount: targetIds.length });
+
+  if (!m.guild.archive) m.guild.archive = [];
+  m.guild.archive.push({
+    npcName: q.npcName, title: q.title, scenario: q.scenario, npcChat: q.npcChat || [],
+    xp: q.xp || 0, statBreakdown, date: todayIso(), targetKernpunkteIds: targetIds
+  });
+
+  m.guild.currentQuest = null; // nächster Besuch generiert eine frische Quest
   await saveState();
 
   closeQuestModal();
   renderQuestPanel();
   if (currentView === 'skilltree') renderSkilltree();
   else renderCharacter();
+
+  return statBreakdown;
 }
 
 /* =========================================================================
@@ -1809,40 +1897,91 @@ function parseJsonLoose(raw) {
 /* =========================================================================
    ON-DEMAND QUEST-GENERIERUNG
 ========================================================================= */
-async function generateAndSetQuest(loc, opts = {}) {
+// Findet einen Kernpunkt irgendwo im Modul (nicht mehr auf ein Unterkapitel
+// beschränkt) — Gilden-Quests kombinieren Kernpunkte quer über das ganze Modul,
+// siehe generateGuildQuest().
+function findKernpunktInModule(m, kpId) {
+  for (const ch of m.chapters) for (const sn of ch.subnodes) {
+    const kp = sn.kernpunkte.find(k => k.id === kpId);
+    if (kp) return { kp, sn, ch };
+  }
+  return null;
+}
+function kernpunktLabelsForIds(m, ids) {
+  return ids.map(id => { const f = findKernpunktInModule(m, id); return f ? f.kp.label : null; }).filter(Boolean);
+}
+
+// Gilden-Quest-Generierung, zweistufig:
+// 1. Planung (günstiges Modell): aus dem GESAMTEN noch offenen Kernpunkte-Pool des
+//    Moduls eine sinnvolle, in sich schlüssige Kombination für EIN echtes Problem
+//    finden — reine Auswahl/Strukturierung, kein kreatives Schreiben, daher reicht
+//    MODEL_STRUCTURE (Haiku).
+// 2. Ausformulierung (Qualitätsmodell): die eigentliche Quest schreiben, mit den
+//    echten Studienbrief-Auszügen NUR der tatsächlich beteiligten Unterkapitel als
+//    Kontext (nicht des ganzen Moduls) — hält Regel 5 (Studienbrief-Bindung) auch
+//    bei modulweiter Kombination durchsetzbar, ohne bei jeder Quest den kompletten
+//    Studienbrief in den Prompt zu packen.
+async function generateGuildQuest(m, opts = {}) {
   qmGenerating = true;
   renderQuestModal();
-  const { module: m, chapter: ch, subnode: sn, questgeber: qg } = loc;
 
-  let targets, isReview;
-  const priorSubnodes = flatSubnodes(m).filter(x => x.subnode.globalIndex < sn.globalIndex).map(x => x.subnode);
+  let targetIds;
   if (opts.forcedTargetIds && opts.forcedTargetIds.length) {
     // Wiederholungsversuch nach nicht bestandener Antwort: exakt dieselben
-    // Zielkernpunkte wie bei der fehlgeschlagenen Quest, nicht neu würfeln —
-    // der Spieler soll denselben Stoff nochmal üben, kein anderes Thema.
-    targets = opts.forcedTargetIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
-    isReview = false;
+    // Zielkernpunkte, nicht neu kombinieren — der Spieler soll denselben Stoff
+    // nochmal üben, nur mit neuem NPC/neuem Fall (siehe forceNewName unten).
+    targetIds = opts.forcedTargetIds;
   } else {
-    // Zielkernpunkte: bevorzugt der eigene Schwerpunkt, aber der GESAMTE Unterkapitel-Pool ist erlaubt
-    // (Fragen sollen sich nicht auf genau einen Block beschränken) — nur "komplett identisch" zu anderen
-    // Questgebern soll vermieden werden, dafür kriegt der Prompt die Geschwister-Schwerpunkte + letzte Titel.
-    const own = qg.kernpunkteIds.map(id => sn.kernpunkte.find(k => k.id === id)).filter(Boolean);
-    const wholeSubnodePool = sn.kernpunkte;
-    targets = own.filter(k => !k.covered);
-    if (targets.length === 0) targets = wholeSubnodePool.filter(k => !k.covered);
-    isReview = false;
-    if (targets.length === 0) {
-      isReview = true;
-      const pool = wholeSubnodePool.concat(priorSubnodes.flatMap(s => s.kernpunkte));
-      targets = shuffleArray(pool).slice(0, Math.min(4, Math.max(2, pool.length)));
+    const pool = [];
+    for (const ch of m.chapters) for (const sn of ch.subnodes) for (const kp of sn.kernpunkte) {
+      if (!kp.covered) pool.push({ id: kp.id, label: kp.label, subnode: sn.title, chapter: ch.title });
     }
+    if (pool.length === 0) {
+      m.guild.currentQuest = {
+        id: uid('gq'), npcName: 'Gildenführer', title: 'Alles erledigt',
+        xp: 0, durationMin: 0, muster: null,
+        npcHook: 'Du hast bereits alle Themen dieses Studienbriefs abgedeckt! Schau bei einem anderen Studienbrief vorbei, oder wiederhole hier fröhlich weiter.',
+        scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: []
+      };
+      m.guild.currentQuest.npcChat.push({ role: 'npc', text: m.guild.currentQuest.npcHook });
+      await saveState();
+      qmGenerating = false;
+      renderQuestModal();
+      return;
+    }
+    const recentTitles = (m.log || []).slice(-6).map(e => e.title);
+    const poolText = pool.map(k => `${k.id} | ${k.subnode} (${k.chapter}) | ${k.label}`).join('\n');
+    const planPrompt = `Du planst EINE fallbasierte Lern-Quest für ein Sport-/Gesundheitsmanagement-Studium (DHfPG).
+Finde eine möglichst gute Kombination aus NICHT bereits bearbeiteten Kernpunkten für EIN einziges, echtes, reales Problem — eine Situation, die auch ohne die Fachbegriffe ein sinnvolles Problem wäre, bei der die Kernpunkte als WERKZEUG gebraucht werden, nicht als das, worüber gesprochen wird.
+WICHTIG: Nimm so viele passende, noch offene Kernpunkte mit rein wie sinnvoll zu EINEM einzigen, kohärenten Problem passen — keine Ober- oder Untergrenze an Anzahl, nur eine Grenze zählt: es darf KEIN Sammelsurium mehrerer unabhängiger Probleme werden (z.B. NICHT "Miriam und Jana haben je ein eigenes Problem" — das ist ungültig, auch wenn beide Probleme für sich genommen gut wären, weil es kein EINES Problem ist). Kernpunkte dürfen aus JEDEM Unterkapitel/Kapitel kommen, unabhängig von der Reihenfolge im Studienbrief.
+Vermeide Themen, die kürzlich schon in einer Quest vorkamen: ${recentTitles.length ? recentTitles.join(', ') : '(keine)'}
+
+Kernpunkte-Pool (Format: id | Unterkapitel (Kapitel) | Kernpunkt):
+${poolText}
+
+Antworte NUR als JSON (keine Backticks, kein Text davor/danach): {"gewaehlteKernpunkte": ["id1","id2",...]}`;
+    let planParsed;
+    try {
+      const planRaw = await callClaude(planPrompt, 2000, null, MODEL_STRUCTURE);
+      planParsed = parseJsonLoose(planRaw);
+    } catch (e) { console.error('Gilden-Planung fehlgeschlagen:', e); planParsed = {}; }
+    targetIds = (planParsed.gewaehlteKernpunkte || []).filter(id => pool.some(k => k.id === id));
+    if (targetIds.length === 0) targetIds = [pool[0].id]; // Sicherheitsnetz, falls die Auswahl leer/ungültig zurückkommt
   }
 
-  const knownVocab = priorSubnodes.flatMap(s => s.kernpunkte.map(k => k.label));
-  const siblingNames = sn.questgeber.filter(x => x.id !== qg.id).map(x => x.name);
-  const recentTitlesHere = (m.log || []).filter(e => e.subnodeId === sn.id).slice(-5).map(e => e.title);
+  const targets = targetIds.map(id => findKernpunktInModule(m, id)).filter(Boolean);
+  // Nur die Auszüge der tatsächlich beteiligten Unterkapitel als Kontext — nicht des
+  // ganzen Moduls, damit Regel 5 (Studienbrief-Bindung) auch bei modulweiter
+  // Kombination durchsetzbar bleibt, ohne bei jeder Quest den kompletten Studienbrief
+  // mitzuschicken.
+  const involvedSubnodes = [...new Map(targets.map(t => [t.sn.id, t.sn])).values()];
+  const excerptsText = involvedSubnodes.map(sn => `— ${sn.title} —\n${sn.sourceExcerpt || '(kein Auszug verfügbar, nutze dein Wissen zu diesem Thema)'}`).join('\n\n');
+  const priorKnown = [];
+  for (const ch of m.chapters) for (const sn of ch.subnodes) for (const kp of sn.kernpunkte) if (kp.covered) priorKnown.push(kp.label);
+  const recentTitlesAll = (m.log || []).slice(-8).map(e => e.title);
+  const prevName = opts.forceNewName || null;
 
-  const prompt = `Du generierst EINE fallbasierte Lern-Quest für ein Lern-App-Questgeber-System (DHfPG Studium, Sport-/Gesundheitsmanagement).
+  const prompt = `Du generierst EINE fallbasierte Lern-Quest für ein Lern-App-Gilden-System (DHfPG Studium, Sport-/Gesundheitsmanagement).
 
 WICHTIGSTE REGEL — ein ECHTES Problem, keine verkleidete Wissensabfrage:
 Der NPC hat ein echtes Anliegen aus seinem Leben und wendet sich direkt an DICH als die Fachperson, die er kennt (sein Trainer, sein Arzt, seine erfahrene Freundin/Kollege, etc.) — nicht an einen neutralen Dritten, der ein fremdes Dokument gegenchecken soll. Bevorzuge die direkte Perspektive: der NPC schreibt/fragt DICH persönlich, so als wärst du wirklich die Person, die er/sie um Rat bittet (Bsp: "Ich hab da bei meinem letzten Training was komisches gemerkt, kannst du mir erklären was da in meinem Körper passiert?" statt "Mein Kumpel hat mir ein Dokument geschickt, kannst du das für mich checken?").
@@ -1853,26 +1992,24 @@ KEINE Decodier-/Erklär-Aufgaben mehr: Die Quest darf NIE darauf hinauslaufen, d
 Terminologie in eingebetteten Fachdokumenten/Zitaten (z.B. was ein Arzt/Trainer geschrieben hat) darf und soll korrekt und fachsprachlich sein — nur der NPC selbst (die hilfesuchende Person) spricht als Laie.
 
 WICHTIGE REGEL — Quest-Spec:
-1. Die folgenden Zielkernpunkte MÜSSEN alle aktiv gebraucht werden, um dem NPC zu helfen (nicht nur erwähnt): ${JSON.stringify(targets.map(t=>t.label))}
+1. Die folgenden Zielkernpunkte MÜSSEN alle aktiv gebraucht werden, um dem NPC zu helfen (nicht nur erwähnt): ${JSON.stringify(targets.map(t=>t.kp.label))}
 2. Wähle EIN Fallmuster — beide bauen auf einer realen Situation auf, in der der Zielkernpunkt als Werkzeug gebraucht wird, nicht als das, worüber gesprochen wird: B (Diagnose-Fall: du musst die echte Ursache unter mehreren Kandidaten finden und begründen, warum die anderen es nicht sind — eingebettet in ein echtes Anliegen, nicht als Zuordnungsübung formuliert), C (Anwendungsfall: du musst aktiv etwas für den NPC konstruieren/berechnen/planen/empfehlen, zugeschnitten auf SEINE konkrete Situation). Beide erfordern Synthese (Zielkernpunkt + Situationsdetails → eine neue Antwort, die so nirgends steht), nicht den Abruf einer Definition.
    Vor dem Fertigstellen — Copy-Paste-Test: Könnte der Spieler die Antwort einfach als Zitat aus dem Studienbrief kopieren und dir schicken, und du müsstest das als bestanden werten? Wenn ja, ist die Quest UNGÜLTIG — so überarbeiten, dass echte Synthese nötig ist, nicht nur Wiedergabe.
 3. Die Nachricht muss ALLE Zielkernpunkte zwingend brauchen, um sie sinnvoll zu beantworten.
 4. Verrate die Bedeutung/Übersetzung eines Zielkernpunkts NICHT versehentlich in der Nachricht selbst — z.B. nicht "ich weiß nicht, ob das vorne oder hinten ist" schreiben, wenn "anterior" (=vorne) oder "posterior" (=hinten) ein Zielkernpunkt ist. Gerade bei anatomischen Fachbegriffen ist die deutsche Übersetzung oft ein ganz normales Alltagswort (vorne, hinten, oben, unten, außen, innen, links, rechts...) — beim natürlichen Formulieren der Alltagssprache des NPCs rutscht so leicht unabsichtlich die Antwort selbst mit rein. Der Spieler soll die Bedeutung erklären müssen, nicht sie vorgelesen bekommen.
-5. Der Studienbrief-Inhalt selbst bleibt strikt gebunden: erfinde KEINE zusätzlichen Fakten, Mechanismen oder Begründungen zum Zielkernpunkt, die der Auszug nicht hergibt und die sich auch nicht daraus herleiten lassen. Das gilt ausdrücklich auch für Verknüpfungen ZWISCHEN zwei im Auszug getrennt genannten Fakten: nur weil zwei Aussagen im selben Abschnitt stehen, heißt das nicht, dass die eine Voraussetzung, Ursache oder Bedingung für die andere ist — erfinde so einen Abhängigkeits-/Kausalzusammenhang nicht.
-   Die konkrete SITUATION drumherum darf dagegen auf echtem, korrektem Alltags-/Fachwissen aufbauen, das NICHT im Studienbrief-Auszug steht (z.B. konkrete Reha-Übungen, Trainingsdetails, Zahlen einer erfundenen Situation) — das betrifft nur das Szenario, nicht den Studienbrief-Inhalt selbst. Bleib dabei bei gut etabliertem, unumstrittenem Fachwissen, nichts Obskures/Spezifisches, das falsch sein könnte. Im Zweifel beim Studienbrief-Inhalt selbst: lieber näher am Auszug bleiben als eine spannendere, aber unbelegte Behauptung aufstellen.
-${isReview ? '6. Das ist eine WIEDERHOLUNGS-Quest (Ziel bereits früher gelernt) — anderer NPC/andere Situation als zuvor, dieselben Begriffe in frischem Kontext.' : ''}
-${opts.forceNewName ? `7. Der Spieler hat die letzte Antwort bei "${qg.name}" NICHT bestanden — ${qg.name} taucht deshalb nicht mehr auf. Erfinde eine KOMPLETT NEUE Person mit neuem, anderem Vornamen (nicht "${qg.name}") und einem neuen, andersartigen persönlichen Problem/Kontext (anderer Alltag, andere Situation) — aber es geht inhaltlich weiterhin um dieselben Zielkernpunkte. Gib den neuen Vornamen als "name" zurück.` : ''}
+5. Der Studienbrief-Inhalt selbst bleibt strikt gebunden: erfinde KEINE zusätzlichen Fakten, Mechanismen oder Begründungen zum Zielkernpunkt, die die untenstehenden Auszüge nicht hergeben und die sich auch nicht daraus herleiten lassen. Das gilt ausdrücklich auch für Verknüpfungen ZWISCHEN zwei getrennt genannten Fakten (auch aus verschiedenen Unterkapiteln): nur weil zwei Aussagen thematisch zusammenpassen, heißt das nicht, dass die eine Voraussetzung, Ursache oder Bedingung für die andere ist — erfinde so einen Abhängigkeits-/Kausalzusammenhang nicht.
+   Die konkrete SITUATION drumherum darf dagegen auf echtem, korrektem Alltags-/Fachwissen aufbauen, das NICHT in den Auszügen steht (z.B. konkrete Reha-Übungen, Trainingsdetails, Zahlen einer erfundenen Situation) — das betrifft nur das Szenario, nicht den Studienbrief-Inhalt selbst. Bleib dabei bei gut etabliertem, unumstrittenem Fachwissen, nichts Obskures/Spezifisches, das falsch sein könnte. Im Zweifel beim Studienbrief-Inhalt selbst: lieber näher an den Auszügen bleiben als eine spannendere, aber unbelegte Behauptung aufstellen.
+${prevName ? `6. Der Spieler hat die letzte Antwort bei "${prevName}" NICHT bestanden — erfinde eine KOMPLETT NEUE Person mit neuem, anderem Vornamen (nicht "${prevName}") und einem neuen, andersartigen persönlichen Problem/Kontext (anderer Alltag, andere Situation) — aber es geht inhaltlich weiterhin um dieselben Zielkernpunkte.` : ''}
 
-Kontext: Unterkapitel "${sn.title}" aus Kapitel "${ch.title}" (Fach-Stat: ${ch.stat}).
-${opts.forceNewName ? '' : `Dieser Questgeber heißt ${qg.name}. `}Interner Themenschwerpunkt (nur Hinweis für dich, nicht für den Spieler sichtbar): ${qg.label} — du darfst jedes Thema aus dem gesamten Unterkapitel einbauen, wenn es zur Nachricht passt.
-Andere Questgeber in diesem Unterkapitel (deine Nachricht sollte sich davon klar unterscheiden, nicht komplett identisch sein): ${siblingNames.length ? siblingNames.join(', ') : '(keine)'}
-Zuletzt in diesem Unterkapitel benutzte Quest-Titel (nicht wiederholen): ${recentTitlesHere.length ? recentTitlesHere.join(', ') : '(keine)'}
-Relevanter Studienbrief-Auszug: ${sn.sourceExcerpt || '(kein Auszug verfügbar, nutze dein Wissen zu diesem Thema)'}
-Begriffe, die der Spieler schon kennt und die OHNE Erklärung benutzt werden dürfen: ${knownVocab.length ? knownVocab.join(', ') : '(noch keine)'}
+Kontext: diese Quest kombiniert Kernpunkte aus folgenden Unterkapiteln: ${involvedSubnodes.map(sn=>sn.title).join(', ')}.
+Zuletzt in diesem Modul benutzte Quest-Titel (nicht wiederholen): ${recentTitlesAll.length ? recentTitlesAll.join(', ') : '(keine)'}
+Relevante Studienbrief-Auszüge:
+${excerptsText}
+Begriffe, die der Spieler schon kennt und die OHNE Erklärung benutzt werden dürfen: ${priorKnown.length ? priorKnown.join(', ') : '(noch keine)'}
 
 KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine doppelten Anführungszeichen in String-Werten (einfache nutzen oder umschreiben).
-{${opts.forceNewName ? `
-  "name": "Neuer Vorname für den NPC (echter Vorname, anders als '${qg.name}')",` : ''}
+{
+  "name": "Vorname des NPCs (echter Vorname, z.B. 'Mia', 'Kevin', 'Frau Bergmann')${prevName ? `, anders als '${prevName}'` : ''}",
   "title": "Kurzer Titel",
   "xp": 15,
   "muster": "B oder C (siehe Regel 2)",
@@ -1882,19 +2019,19 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
 }`;
 
   try {
-    const raw = await callClaude(prompt, 3000);
+    const raw = await callClaude(prompt, 3500);
     const parsed = parseJsonLoose(raw);
-    if (opts.forceNewName && parsed.name) qg.name = parsed.name;
-    qg.currentQuest = {
-      id: uid('q'),
-      title: parsed.title || ('Anliegen von ' + qg.name),
+    const npcName = parsed.name || fallbackNpcName(uid('npc'));
+    m.guild.currentQuest = {
+      id: uid('gq'),
+      npcName,
+      title: parsed.title || ('Anliegen von ' + npcName),
       xp: parsed.xp || 12,
-      stat: ch.stat,
       durationMin: parsed.durationMin || 15,
       muster: parsed.muster || 'B',
       npcHook: parsed.npcHook || '',
-      scenario: parsed.nachricht || parsed.situation || '',
-      targetKernpunkteIds: targets.map(t => t.id),
+      scenario: parsed.nachricht || '',
+      targetKernpunkteIds: targetIds,
       accepted: false,
       npcChat: []
     };
@@ -1902,8 +2039,8 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   } catch (e) {
     console.error(e);
     const failMsg = 'Diese Quest konnte gerade nicht generiert werden. Schließ das Fenster und versuch es nochmal.';
-    qg.currentQuest = {
-      id: uid('q'), title: 'Generierung fehlgeschlagen', xp: 0, stat: ch.stat, durationMin: 0, muster: null,
+    m.guild.currentQuest = {
+      id: uid('gq'), npcName: 'Gildenführer', title: 'Generierung fehlgeschlagen', xp: 0, durationMin: 0, muster: null,
       npcHook: failMsg,
       scenario: '', targetKernpunkteIds: [], accepted: true, npcChat: [{ role: 'npc', text: failMsg }]
     };
@@ -1912,17 +2049,10 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
   renderQuestModal();
 }
 
-// Nicht bestandene Antwort: der bisherige Questgeber-Name wird durch einen neuen
-// ersetzt (siehe forceNewName oben), aber dieselben Zielkernpunkte bleiben — der
-// Spieler übt denselben Stoff nochmal, nur mit neuem NPC/neuem Fall.
-async function regenerateQuestAfterFailure(loc, targetIds) {
-  await generateAndSetQuest(loc, { forcedTargetIds: targetIds, forceNewName: true });
-}
-
-function shuffleArray(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i+1)); [a[i],a[j]] = [a[j],a[i]]; }
-  return a;
+// Nicht bestandene Antwort: komplett neuer NPC/neuer Fall (siehe forceNewName oben),
+// aber dieselben Zielkernpunkte bleiben — der Spieler übt denselben Stoff nochmal.
+async function regenerateQuestAfterFailure(m, targetIds, prevName) {
+  await generateGuildQuest(m, { forcedTargetIds: targetIds, forceNewName: prevName });
 }
 
 /* =========================================================================
@@ -1937,29 +2067,16 @@ function fallbackNpcName(seed) {
 
 function buildNormalizedSubnode(snRaw, chId, si, globalIndex) {
   const snId = chId + '.' + (si + 1);
-  const kernpunkte = [];
-  const questgeberRaw = Array.isArray(snRaw.questgeber) ? snRaw.questgeber : [];
-  const questgeber = questgeberRaw.map((qgRaw, qi) => {
-    const qgId = snId + '.qg' + (qi + 1);
-    const kpIds = [];
-    (qgRaw.kernpunkte || []).forEach((label, ki) => {
-      const kpId = snId + '.k' + (kernpunkte.length + 1);
-      kernpunkte.push({ id: kpId, label: String(label), covered: false });
-      kpIds.push(kpId);
-    });
-    return { id: qgId, name: qgRaw.name || fallbackNpcName(qgId), label: qgRaw.label || ('Themenblock ' + (qi+1)), kernpunkteIds: kpIds, currentQuest: null };
-  });
-  if (questgeber.length === 0) {
-    // Fallback: falls kein questgeber-Array mitgeliefert wurde, alles in einen einzigen Questgeber packen
-    const kpIds = [];
-    (snRaw.kernpunkte || []).forEach(label => {
-      const kpId = snId + '.k' + (kernpunkte.length + 1);
-      kernpunkte.push({ id: kpId, label: String(label), covered: false });
-      kpIds.push(kpId);
-    });
-    const qgId = snId + '.qg1';
-    questgeber.push({ id: qgId, name: fallbackNpcName(qgId), label: snRaw.title || 'Questgeber', kernpunkteIds: kpIds, currentQuest: null });
-  }
+  // Kernpunkte sind eine flache Liste, KEIN Cluster/Namen mehr — Quests werden nicht
+  // mehr pro Unterkapitel vorgeneriert, sondern von der Gilde modulweit aus dem
+  // gesamten noch offenen Kernpunkte-Pool zusammengestellt (siehe generateGuildQuest()).
+  // Nimmt sowohl das neue flache Format (snRaw.kernpunkte) als auch das alte, per
+  // Questgeber gruppierte Format (snRaw.questgeber[].kernpunkte) an, damit älterer
+  // Text-Import weiterhin funktioniert.
+  const rawLabels = Array.isArray(snRaw.kernpunkte) && snRaw.kernpunkte.length
+    ? snRaw.kernpunkte
+    : (Array.isArray(snRaw.questgeber) ? snRaw.questgeber.flatMap(qg => qg.kernpunkte || []) : []);
+  const kernpunkte = rawLabels.map((label, ki) => ({ id: snId + '.k' + (ki + 1), label: String(label), covered: false }));
   return {
     id: snId,
     title: snRaw.title || ('Unterkapitel ' + snId),
@@ -1967,8 +2084,6 @@ function buildNormalizedSubnode(snRaw, chId, si, globalIndex) {
     globalIndex,
     sourceExcerpt: snRaw.excerpt || null,
     kernpunkte,
-    questgeber,
-    profChat: [], // Chat-Verlauf mit dem Professor (freie Fragen zum ganzen Studienbrief, siehe renderProfTab)
     exercise: snRaw.exercise ? {
       id: snId + '.boss',
       title: snRaw.exercise.title || ('Kapitel-Boss'),
@@ -2140,7 +2255,7 @@ async function startAnalysis() {
       id: uid('uploaded'), title: outline.title || uploadState.file.name.replace(/\.pdf$/i,''),
       subject: outline.subject || '', color: outline.color || MODULE_COLORS[modules.length % MODULE_COLORS.length],
       startDate: todayIso(), targetDate: addDays(todayIso(), uploadState.daysTotal),
-      pdfText, chapters: [], log: []
+      pdfText, chapters: [], log: [], profChat: [], guild: { currentQuest: null, archive: [] }
     };
 
     let gi = 1;
@@ -2181,7 +2296,7 @@ function buildFailedChapter(chOutline, startGlobalIndex) {
     icon: chOutline.icon || null, _generationFailed: true,
     subnodes: (chOutline.subnodes || []).map(sn => ({
       id: sn.id, title: sn.title, icon: null, globalIndex: gi++, sourceExcerpt: null,
-      kernpunkte: [], questgeber: [], exercise: null
+      kernpunkte: [], exercise: null
     }))
   };
 }
@@ -2251,17 +2366,15 @@ async function generateSubnodeContent(chapterText, chOutline, snOutline) {
   // einzelnes Kapitel nicht unbegrenzt viel kostet.
   const context = `Studienbrief-Ausschnitt (Kontext für die folgenden Aufgaben):\n\n${chapterText.slice(0, 400000)}`;
 
-  const prompt = `Du bereitest EIN Unterkapitel für ein Questgeber-basiertes Lernsystem vor (KEINE fertigen Quests, nur Struktur + Themen), auf Basis des oben als Kontext bereitgestellten Studienbrief-Ausschnitts.
+  const prompt = `Du bereitest EIN Unterkapitel für ein Lernsystem vor (KEINE fertigen Quests, nur die reine Themenliste), auf Basis des oben als Kontext bereitgestellten Studienbrief-Ausschnitts.
 
 Kapitel: "${chOutline.title}" (Stat: ${chOutline.stat})
 Unterkapitel: "${snOutline.title}"
 
-1. Extrahiere ALLE atomaren, prüfbaren Kernpunkte (Begriffe, Konzepte, Mechanismen) dieses Unterkapitels — vollständig, nichts auslassen.
-2. Gruppiere die Kernpunkte in 1 bis mehrere THEMATISCHE CLUSTER (= spätere Questgeber). Jeder Cluster hat einen eigenen, klar unterscheidbaren Schwerpunkt und NICHT dieselben Kernpunkte wie ein anderer Cluster (keine Überschneidung der Cluster untereinander). Bei wenig Stoff reicht 1 Cluster, bei viel/heterogenem Stoff mehrere (ca. 3-6 Kernpunkte pro Cluster ist ein guter Richtwert).
-3. Gib jedem Cluster/Questgeber einen echten Vornamen (z.B. "Mia", "Kevin", "Frau Bergmann") — das ist der Name, den der Spieler sieht, nicht das Thema. Verschiedene Namen, keine Wiederholung.
-4. Gib ein passendes Emoji-Icon für das Unterkapitel (zeigt den konkreten Inhalt, nicht nur das Fach).
-5. Liefere einen kurzen, relevanten Text-Auszug (excerpt, ca. 500-1500 Zeichen) aus dem Studienbrief-Text als Kontext für spätere Quest-Generierung.
-6. Falls das Unterkapitel eine Original-Übung/Wiederholungsfrage aus dem Studienbrief enthält, die sich als Kapitel-Abschluss-Herausforderung eignet, gib sie als "exercise" mit.
+1. Extrahiere ALLE atomaren, prüfbaren Kernpunkte (Begriffe, Konzepte, Mechanismen) dieses Unterkapitels — vollständig, nichts auslassen, als flache Liste (keine Gruppierung/Cluster nötig — Quests werden später modulweit aus dem gesamten Kernpunkte-Pool zusammengestellt, nicht mehr pro Unterkapitel).
+2. Gib ein passendes Emoji-Icon für das Unterkapitel (zeigt den konkreten Inhalt, nicht nur das Fach).
+3. Liefere einen kurzen, relevanten Text-Auszug (excerpt, ca. 500-1500 Zeichen) aus dem Studienbrief-Text als Kontext für spätere Quest-Generierung.
+4. Falls das Unterkapitel eine Original-Übung/Wiederholungsfrage aus dem Studienbrief enthält, die sich als Kapitel-Abschluss-Herausforderung eignet, gib sie als "exercise" mit.
 
 Sonderregel: Verweist der Text auf externes Wissen (z.B. "Recherchieren Sie über X"), nimm X trotzdem explizit als Kernpunkt auf.
 Vorfilter: Meta-/Verwaltungsinhalt wird nicht extrahiert.
@@ -2270,7 +2383,7 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
 {
   "icon": "🧭",
   "excerpt": "...",
-  "questgeber": [ { "name": "Mia", "label": "Kurzer interner Cluster-Name (nicht sichtbar für den Spieler)", "kernpunkte": ["Begriff 1","Begriff 2"] } ],
+  "kernpunkte": ["Begriff 1", "Begriff 2", "..."],
   "exercise": null
 }`;
 
@@ -2315,7 +2428,7 @@ async function generateChapterStructure(chapterText, chOutline, startGlobalIndex
   let gi = startGlobalIndex;
   const subnodes = outlines.map((snOutline, si) => buildNormalizedSubnode({
     title: snOutline.title, icon: results[si].icon, excerpt: results[si].excerpt,
-    questgeber: results[si].questgeber, exercise: results[si].exercise
+    kernpunkte: results[si].kernpunkte, exercise: results[si].exercise
   }, chOutline.id, si, gi++));
 
   return { id: chOutline.id, title: chOutline.title, stat: chOutline.stat, color: chOutline.color, icon: chOutline.icon || null, _generationFailed: anyFailed, subnodes };
@@ -2356,7 +2469,9 @@ function renderUploadStep4() {
 /* =========================================================================
    TEXT-IMPORT FLOW (JSON von Claude im Chat generiert)
    Schema: { title, subject, color, chapters:[{ title, stat, icon,
-     subnodes:[{ title, icon, excerpt, questgeber:[{label, kernpunkte:[...]}], exercise? }] }] }
+     subnodes:[{ title, icon, excerpt, kernpunkte:["Begriff 1","Begriff 2",...], exercise? }] }] }
+   (altes Format subnodes[].questgeber:[{label, kernpunkte:[...]}] wird von
+   buildNormalizedSubnode() weiterhin akzeptiert und flach zusammengeführt)
 ========================================================================= */
 let importState = {
   step: 1, mode: 'new', targetModuleId: null, jsonText: '', parseError: '', parsed: null,
@@ -2475,7 +2590,7 @@ async function finalizeImport() {
   const newModule = {
     id: uid('imported'), title: p.title, subject: p.subject, color: p.color,
     startDate: todayIso(), targetDate: addDays(todayIso(), importState.daysTotal),
-    pdfText: p.pdfText, chapters: p.chapters, log: []
+    pdfText: p.pdfText, chapters: p.chapters, log: [], profChat: [], guild: { currentQuest: null, archive: [] }
   };
   modules.push(newModule);
   activeModuleId = newModule.id;
