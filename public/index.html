@@ -2023,6 +2023,39 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
     const raw = await callClaude(prompt, 3500);
     const parsed = parseJsonLoose(raw);
     const npcName = parsed.name || fallbackNpcName(uid('npc'));
+    const npcHook = parsed.npcHook || '';
+    const scenario = parsed.nachricht || '';
+
+    // Verifikation: Regel 1 ("alle Zielkernpunkte MÜSSEN aktiv gebraucht werden")
+    // wird von Schritt 2 nicht zuverlässig eingehalten — bei großen Kombinationen
+    // landen teils Kernpunkte in targetKernpunkteIds, die im tatsächlich
+    // geschriebenen Fall nie vorkommen (beobachtet: 10 von 38 bei einer Quest, die
+    // Bänder/Schleimbeutel deklarierte, aber nie erwähnte). Ungeprüft würde die
+    // spätere Bewertung (submitQuestAnswer) dann Wissen abfragen, das der Fall nie
+    // hergibt — unfair. Deshalb ein dritter, günstiger Check-Call: welche der
+    // deklarierten Kernpunkte kommen im tatsächlichen Text wirklich vor? Nicht
+    // bestätigte Kernpunkte fallen aus targetKernpunkteIds raus und bleiben offen
+    // für eine spätere Quest — kein Datenverlust, nur eine sauberere Zuordnung.
+    let verifiedIds = targetIds;
+    try {
+      const verifyPrompt = `Prüfe, welche der folgenden Zielkernpunkte im untenstehenden Quest-Text WIRKLICH vorkommen oder sich direkt daraus ableiten lassen — der Spieler müsste sie im weiteren Gespräch dazu erklären/anwenden können, ausgehend von dem, was hier tatsächlich steht.
+
+Zielkernpunkte (Format: id | Kernpunkt):
+${targets.map(t => `${t.kp.id} | ${t.kp.label}`).join('\n')}
+
+Quest-Text:
+${npcHook}
+${scenario}
+
+Antworte NUR als JSON (keine Backticks): {"bestaetigt": ["id1", "id2", ...]} — nur die ids, die WIRKLICH im Text vorkommen oder sich direkt daraus ableiten lassen. Kernpunkte, die nur thematisch verwandt sind, aber im Text nicht wirklich gebraucht werden, gehören NICHT in die Liste.`;
+      const verifyRaw = await callClaude(verifyPrompt, 1500, null, MODEL_STRUCTURE);
+      const verifyParsed = parseJsonLoose(verifyRaw);
+      const confirmed = (verifyParsed.bestaetigt || []).filter(id => targetIds.includes(id));
+      if (confirmed.length > 0) verifiedIds = confirmed; // leere/kaputte Antwort -> Sicherheitsnetz: alle Ziele behalten statt die Quest zu entwerten
+    } catch (e) {
+      console.error('Kernpunkte-Verifikation fehlgeschlagen, behalte alle Zielkernpunkte:', e);
+    }
+
     m.guild.currentQuest = {
       id: uid('gq'),
       npcName,
@@ -2030,9 +2063,9 @@ KRITISCH: Antworte NUR als JSON (keine Backticks, kein Text davor/danach). Keine
       xp: parsed.xp || 12,
       durationMin: parsed.durationMin || 15,
       muster: parsed.muster || 'B',
-      npcHook: parsed.npcHook || '',
-      scenario: parsed.nachricht || '',
-      targetKernpunkteIds: targetIds,
+      npcHook,
+      scenario,
+      targetKernpunkteIds: verifiedIds,
       accepted: false,
       npcChat: []
     };
