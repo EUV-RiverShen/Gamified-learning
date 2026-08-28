@@ -1529,13 +1529,21 @@ async function sendProfChat() {
     (kp.covered ? coveredAll : openAll).push(kp.label);
   }
   const gq = m.guild && m.guild.currentQuest;
+  // Nicht nur der Quest-Titel, sondern die tatsächlichen Zielkernpunkte — sonst kann
+  // der Professor nicht gezielt zur richtigen Studienbrief-Stelle hinlenken (live
+  // beobachtet: bei einer Frage, die exakt einem vorhandenen Zielkernpunkt entsprach,
+  // hat der Professor die passende Textstelle nie gefunden/erwähnt und stattdessen
+  // eine eigene, im Studienbrief nicht stehende Erklärung konstruiert).
+  const gqLabels = (gq && gq.accepted) ? kernpunktLabelsForIds(m, gq.targetKernpunkteIds || []) : [];
 
-  const prompt = `Du bist ein geduldiger, freundlicher Fach-Professor in einer Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement). Im Systemkontext hast du den GESAMTEN Studienbrief dieses Moduls als Hintergrundwissen — nutze NUR den, erfinde keine Fakten dazu.
+  const prompt = `Du bist ein geduldiger, freundlicher Fach-Professor in einer Lern-App für ein DHfPG-Studium (Sport-/Gesundheitsmanagement). Im Systemkontext hast du den GESAMTEN Studienbrief dieses Moduls als Hintergrundwissen.
 
 Wie du erklärst: ein echtes GESPRÄCH, kein Vortrag — kurze, verdauliche Antworten (in der Regel 2-6 Sätze, nur bei echtem Bedarf länger), keine Textwände. Frag bei Bedarf selbst nach, was genau unklar ist, statt pauschal alles runterzurattern. Beantworte auch Gegenfragen/Verständnisfragen direkt und ehrlich.
 
+WICHTIGSTE REGEL: Prüfe bei JEDER Frage zuerst aktiv, ob der Studienbrief selbst dazu etwas hergibt — such wirklich danach, bevor du auf eigenes Wissen ausweichst. Passt die Frage zu einem der Zielkernpunkte unten, MUSS deine Antwort auf der Studienbrief-Stelle aufbauen, die genau diesen Kernpunkt trägt, nicht auf einer plausibel klingenden eigenen Konstruktion. Nur wenn der Studienbrief zu einem Aspekt WIRKLICH nichts hergibt, darfst du auf eigenes Fachwissen ausweichen — dann aber IMMER explizit und unübersehbar kennzeichnen (z.B. "Das steht nicht im Studienbrief, aber..."), nicht nur beiläufig.
+
 Fortschritt des Studierenden in "${m.title}": ${coveredAll.length} von ${coveredAll.length + openAll.length} Begriffen bereits über Quests bearbeitet.
-${gq && gq.accepted ? `Die Studierende hat gerade eine offene Quest zum Thema "${gq.title}" — orientiere dich daran, falls die Frage dazu passt.` : ''}
+${gqLabels.length ? `Die Studierende hat gerade eine offene Quest ("${gq.title}") — das sind ihre TATSÄCHLICHEN Zielkernpunkte dafür, such aktiv danach, wenn eine Frage dazu passt: ${JSON.stringify(gqLabels)}` : (gq && gq.accepted ? `Die Studierende hat gerade eine offene Quest zum Thema "${gq.title}" — orientiere dich daran, falls die Frage dazu passt.` : '')}
 Beantworte Fragen zu JEDEM Thema aus dem Studienbrief ehrlich — auch zu noch nicht bearbeiteten Begriffen, blockiere nichts.
 
 Bisheriger Chat-Verlauf mit dir: ${JSON.stringify(m.profChat.slice(-12))}
